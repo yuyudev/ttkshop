@@ -1,0 +1,56 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model TiktokAuth {
+  id              String   @id @default(uuid())
+  shopId          String   @unique
+  accessToken     String
+  accessExpiresAt DateTime
+  refreshToken    String
+  scopes          String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+}
+
+model ProductMap {
+  id           String   @id @default(uuid())
+  vtexSkuId    String   @unique
+  shopId       String
+  ttsProductId String?
+  ttsSkuId     String?
+  status       String
+  lastError    String?
+  updatedAt    DateTime @updatedAt
+  createdAt    DateTime @default(now())
+}
+
+model OrderMap {
+  id          String   @id @default(uuid())
+  shopId      String
+  ttsOrderId  String   @unique
+  vtexOrderId String?
+  status      String
+  lastError   String?
+  labelUrl    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Idempotency {
+  id          String   @id @default(uuid())
+  key         String   @unique
+  processedAt DateTime @default(now())
+  payloadHash String
+}

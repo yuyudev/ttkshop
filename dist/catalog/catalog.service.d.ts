@@ -1,0 +1,21 @@
+import { PinoLogger } from 'nestjs-pino';
+import { PrismaService } from '../prisma/prisma.service';
+import { CatalogSyncDto } from '../common/dto';
+import { VtexCatalogClient } from './vtex-catalog.client';
+import { TiktokProductClient } from './tiktok-product.client';
+export declare class CatalogService {
+    private readonly vtexClient;
+    private readonly tiktokClient;
+    private readonly prisma;
+    private readonly logger;
+    constructor(vtexClient: VtexCatalogClient, tiktokClient: TiktokProductClient, prisma: PrismaService, logger: PinoLogger);
+    syncCatalog(shopId: string, input: CatalogSyncDto): Promise<{
+        processed: number;
+        synced: number;
+        failed: number;
+        errors: Record<string, string>;
+    }>;
+    private fetchImagesSafely;
+    private isNotFoundError;
+    private extractIdentifiers;
+}
