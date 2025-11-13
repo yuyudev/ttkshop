@@ -102,7 +102,12 @@ export class TiktokProductClient {
   async createProduct(shopId: string, input: TiktokProductInput): Promise<TiktokProductResponse> {
     const accessToken = await this.tiktokShopService.getAccessToken(shopId);
     const payload = await this.buildProductPayload(shopId, accessToken, input);
-    const url = this.buildSignedUrl('/product/202309/products');
+
+    // IMPORTANTE: incluir o body na assinatura
+    const url = this.buildSignedUrl('/product/202309/products', {
+      body: payload,
+    });
+
     const headers = this.buildHeaders(accessToken);
     const response = await firstValueFrom(this.http.post(url, payload, { headers }));
     return this.parseProductResponse(response.data);
@@ -115,7 +120,13 @@ export class TiktokProductClient {
   ): Promise<TiktokProductResponse> {
     const accessToken = await this.tiktokShopService.getAccessToken(shopId);
     const payload = await this.buildProductPayload(shopId, accessToken, input, { productId });
-    const url = this.buildSignedUrl(`/product/202309/products/${productId}`);
+
+    // path com o productId faz parte do stringToSign
+    const path = `/product/202309/products/${productId}`;
+    const url = this.buildSignedUrl(path, {
+      body: payload,
+    });
+
     const headers = this.buildHeaders(accessToken);
     const response = await firstValueFrom(this.http.put(url, payload, { headers }));
     return this.parseProductResponse(response.data);
@@ -148,6 +159,7 @@ export class TiktokProductClient {
     const url = `${this.openBase}${path}`;
     const headers = {
       'Content-Type': 'application/json',
+      'x-tts-access-token': accessToken,
       Authorization: `Bearer ${accessToken}`,
     };
 
@@ -163,22 +175,33 @@ export class TiktokProductClient {
     }
   }
 
+  /**
+   * Monta URL com assinatura correta.
+   * `body` é usado na assinatura quando for POST/PUT.
+   */
   private buildSignedUrl(
     path: string,
-    options: { extraParams?: Record<string, string>; includeShopCipher?: boolean; includeShopId?: boolean } = {},
+    options: {
+      extraParams?: Record<string, string | number | boolean | undefined>;
+      includeShopCipher?: boolean;
+      includeShopId?: boolean;
+      body?: any;
+    } = {},
   ): string {
-    const timestamp = Math.floor(Date.now() / 1000);
-    const params: Record<string, string | number | boolean> = {
-      timestamp,
+    const params: Record<string, string | number | boolean | undefined> = {
       ...(options.extraParams ?? {}),
     };
+
+    // Por padrão incluímos shop_cipher e shop_id (exigidos nos endpoints de product)
     if (options.includeShopCipher !== false) {
       params.shop_cipher = this.shopCipher;
     }
     if (options.includeShopId !== false && this.shopId) {
       params.shop_id = this.shopId;
     }
-    const query = buildSignedQuery(this.appKey, this.appSecret, path, params);
+
+    // buildSignedQuery já adiciona app_key, sign_method e timestamp internamente
+    const query = buildSignedQuery(this.appKey, this.appSecret, path, params, options.body);
     return `${this.openBase}${path}?${query.toString()}`;
   }
 
@@ -186,6 +209,7 @@ export class TiktokProductClient {
     return {
       'Content-Type': 'application/json',
       Accept: 'application/json',
+      'x-tts-access-token': accessToken,
       Authorization: `Bearer ${accessToken}`,
     };
   }
@@ -253,7 +277,8 @@ export class TiktokProductClient {
       inventory,
       identifier_code: identifierCode,
       sku_img: skuImgUri ? { uri: skuImgUri } : undefined,
-      supplementary_sku_images: supplementarySkuImages.length > 0 ? supplementarySkuImages : undefined,
+      supplementary_sku_images:
+        supplementarySkuImages.length > 0 ? supplementarySkuImages : undefined,
       sales_attributes: this.buildSalesAttributes(input),
       sku_unit_count: this.buildSkuUnitCount(input.sku),
     };
@@ -336,17 +361,21 @@ export class TiktokProductClient {
     }
 
     try {
-    const url = this.buildSignedUrl('/product/202309/images/upload', {
-      includeShopCipher: false,
-      includeShopId: false,
-    });
+      const body = {
+        image_url: normalized,
+      };
+
+      const url = this.buildSignedUrl('/product/202309/images/upload', {
+        includeShopCipher: false,
+        includeShopId: false,
+        body,
+      });
+
       const headers = this.buildHeaders(accessToken);
       const response = await firstValueFrom(
         this.http.post(
           url,
-          {
-            image_url: normalized,
-          },
+          body,
           { headers },
         ),
       );
@@ -485,7 +514,9 @@ export class TiktokProductClient {
       }
       if (Array.isArray(value)) {
         const cleaned = value
-          .map((item) => (typeof item === 'object' && item !== null ? this.cleanPayload(item as any) : item))
+          .map((item) =>
+            typeof item === 'object' && item !== null ? this.cleanPayload(item as any) : item,
+          )
           .filter((item) => item !== undefined && item !== null);
         if (cleaned.length > 0) {
           clone[key] = cleaned;

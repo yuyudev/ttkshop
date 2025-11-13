@@ -60,7 +60,9 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
     async createProduct(shopId, input) {
         const accessToken = await this.tiktokShopService.getAccessToken(shopId);
         const payload = await this.buildProductPayload(shopId, accessToken, input);
-        const url = this.buildSignedUrl('/product/202309/products');
+        const url = this.buildSignedUrl('/product/202309/products', {
+            body: payload,
+        });
         const headers = this.buildHeaders(accessToken);
         const response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, payload, { headers }));
         return this.parseProductResponse(response.data);
@@ -68,7 +70,10 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
     async updateProduct(shopId, productId, input) {
         const accessToken = await this.tiktokShopService.getAccessToken(shopId);
         const payload = await this.buildProductPayload(shopId, accessToken, input, { productId });
-        const url = this.buildSignedUrl(`/product/202309/products/${productId}`);
+        const path = `/product/202309/products/${productId}`;
+        const url = this.buildSignedUrl(path, {
+            body: payload,
+        });
         const headers = this.buildHeaders(accessToken);
         const response = await (0, rxjs_1.firstValueFrom)(this.http.put(url, payload, { headers }));
         return this.parseProductResponse(response.data);
@@ -89,6 +94,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         const url = `${this.openBase}${path}`;
         const headers = {
             'Content-Type': 'application/json',
+            'x-tts-access-token': accessToken,
             Authorization: `Bearer ${accessToken}`,
         };
         switch (method) {
@@ -103,9 +109,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         }
     }
     buildSignedUrl(path, options = {}) {
-        const timestamp = Math.floor(Date.now() / 1000);
         const params = {
-            timestamp,
             ...(options.extraParams ?? {}),
         };
         if (options.includeShopCipher !== false) {
@@ -114,13 +118,14 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         if (options.includeShopId !== false && this.shopId) {
             params.shop_id = this.shopId;
         }
-        const query = (0, signer_1.buildSignedQuery)(this.appKey, this.appSecret, path, params);
+        const query = (0, signer_1.buildSignedQuery)(this.appKey, this.appSecret, path, params, options.body);
         return `${this.openBase}${path}?${query.toString()}`;
     }
     buildHeaders(accessToken) {
         return {
             'Content-Type': 'application/json',
             Accept: 'application/json',
+            'x-tts-access-token': accessToken,
             Authorization: `Bearer ${accessToken}`,
         };
     }
@@ -236,14 +241,16 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
             return this.imageUriCache.get(normalized) ?? null;
         }
         try {
+            const body = {
+                image_url: normalized,
+            };
             const url = this.buildSignedUrl('/product/202309/images/upload', {
                 includeShopCipher: false,
                 includeShopId: false,
+                body,
             });
             const headers = this.buildHeaders(accessToken);
-            const response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, {
-                image_url: normalized,
-            }, { headers }));
+            const response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, body, { headers }));
             const uri = response.data?.data?.uri ??
                 response.data?.data?.image?.uri ??
                 response.data?.uri ??
@@ -350,7 +357,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
             }
             if (Array.isArray(value)) {
                 const cleaned = value
-                    .map((item) => (typeof item === 'object' && item !== null ? this.cleanPayload(item) : item))
+                    .map((item) => typeof item === 'object' && item !== null ? this.cleanPayload(item) : item)
                     .filter((item) => item !== undefined && item !== null);
                 if (cleaned.length > 0) {
                     clone[key] = cleaned;

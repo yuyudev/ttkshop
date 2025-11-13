@@ -1,34 +1,41 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.buildSignedQuery = exports.createTikTokSignature = void 0;
-const crypto_1 = require("crypto");
-const createTikTokSignature = (secret, path, params) => {
-    const filtered = Object.entries(params)
-        .filter(([, value]) => value !== undefined && value !== null)
-        .map(([key, value]) => [key, String(value)])
-        .sort(([a], [b]) => (a > b ? 1 : -1));
-    const query = filtered.map(([key, value]) => `${key}${value}`).join('');
-    const payload = `${path}${query}`;
-    const digest = (0, crypto_1.createHmac)('sha256', secret).update(payload).digest('hex');
-    return digest;
-};
 exports.createTikTokSignature = createTikTokSignature;
-const buildSignedQuery = (appKey, secret, path, params) => {
-    const baseParams = {
+exports.buildSignedQuery = buildSignedQuery;
+const crypto = require("crypto");
+function createTikTokSignature(secret, path, params, body) {
+    const keys = Object.keys(params).filter((key) => key !== 'sign' && key !== 'access_token');
+    keys.sort((a, b) => a.localeCompare(b));
+    let concatenated = '';
+    for (const key of keys) {
+        const value = params[key];
+        if (value !== undefined && value !== null) {
+            concatenated += `${key}${value}`;
+        }
+    }
+    let stringToSign = path + concatenated;
+    if (body && Object.keys(body).length > 0) {
+        stringToSign += JSON.stringify(body);
+    }
+    const hmac = crypto.createHmac('sha256', secret);
+    hmac.update(stringToSign, 'utf8');
+    return hmac.digest('hex');
+}
+function buildSignedQuery(appKey, secret, path, params = {}, body) {
+    const timestamp = Math.floor(Date.now() / 1000);
+    const paramsForSignature = {
         app_key: appKey,
-        sign: '',
         sign_method: 'HmacSHA256',
-        timestamp: Math.floor(Date.now() / 1000),
+        timestamp,
         ...params,
     };
-    const sign = (0, exports.createTikTokSignature)(secret, path, baseParams);
+    const sign = createTikTokSignature(secret, path, paramsForSignature, body);
     const query = new URLSearchParams();
-    Object.entries({ ...baseParams, sign }).forEach(([key, value]) => {
-        if (value !== undefined && value !== null) {
-            query.append(key, String(value));
+    Object.entries({ ...paramsForSignature, sign }).forEach(([k, v]) => {
+        if (v !== undefined && v !== null) {
+            query.append(k, String(v));
         }
     });
     return query;
-};
-exports.buildSignedQuery = buildSignedQuery;
+}
 //# sourceMappingURL=signer.js.map
