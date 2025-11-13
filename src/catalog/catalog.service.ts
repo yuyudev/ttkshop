@@ -13,6 +13,9 @@ import {
 
 @Injectable()
 export class CatalogService {
+  // limite de SKUs processados por execução para evitar timeout
+  private readonly MAX_SKUS_PER_RUN = 50;
+
   constructor(
     private readonly vtexClient: VtexCatalogClient,
     private readonly tiktokClient: TiktokProductClient,
@@ -22,6 +25,13 @@ export class CatalogService {
     this.logger.setContext(CatalogService.name);
   }
 
+  /**
+   * Endpoint atual de sync.
+   * Agora ele:
+   * - Busca todos os SKUs na VTEX
+   * - Processa apenas um batch (MAX_SKUS_PER_RUN) por chamada
+   * - Usa um helper que faz o sync de 1 SKU (ótimo p/ cron reaproveitar depois)
+   */
   async syncCatalog(shopId: string, input: CatalogSyncDto) {
     const skuSummaries = await this.vtexClient.listSkus(input.updatedFrom);
 
@@ -30,113 +40,196 @@ export class CatalogService {
     const errors: Record<string, string> = {};
 
     for (const summary of skuSummaries) {
+      if (processed >= this.MAX_SKUS_PER_RUN) {
+        break;
+      }
+
       processed += 1;
-      try {
-        const sku = await this.vtexClient.getSkuById(summary.id);
-        const productId = sku?.ProductId ?? sku?.productId ?? sku?.ParentProductId;
-        if (!productId) {
-          throw new Error('VTEX SKU did not include productId');
-        }
-        const product = await this.vtexClient.getProductById(String(productId));
-        const price = await this.vtexClient.getPrice(summary.id);
-        const images = await this.fetchImagesSafely(summary.id);
-        const quantity = sku.StockBalance ?? sku.stockBalance ?? 0;
 
-        const productInput: TiktokProductInput = {
-          vtexSkuId: summary.id,
-          sku,
-          product,
-          price,
-          quantity,
-          images,
-        };
+      const result = await this.syncSingleSku(shopId, summary.id);
 
-        const mapping = await this.prisma.productMap.findUnique({
-          where: { vtexSkuId: summary.id },
-        });
-
-        let ttsSkuId = mapping?.ttsSkuId ?? null;
-        let ttsProductId = mapping?.ttsProductId ?? null;
-
-        if (!mapping?.ttsProductId) {
-          const response = await this.tiktokClient.createProduct(shopId, productInput);
-          ({ productId: ttsProductId, skuId: ttsSkuId } = this.extractIdentifiers(response));
-
-          await this.prisma.productMap.upsert({
-            where: { vtexSkuId: summary.id },
-            update: {
-              status: 'synced',
-              lastError: null,
-              ttsProductId,
-              ttsSkuId,
-              shopId,
-            },
-            create: {
-              vtexSkuId: summary.id,
-              shopId,
-              status: 'synced',
-              ttsProductId,
-              ttsSkuId,
-            },
-          });
-        } else {
-          const response = await this.tiktokClient.updateProduct(
-            shopId,
-            mapping.ttsProductId,
-            productInput,
-          );
-          const identifiers = this.extractIdentifiers(response);
-          ttsProductId = identifiers.productId ?? mapping.ttsProductId;
-          ttsSkuId = identifiers.skuId ?? mapping.ttsSkuId;
-
-          await this.prisma.productMap.update({
-            where: { vtexSkuId: summary.id },
-            data: {
-              status: 'synced',
-              lastError: null,
-              shopId,
-              ttsProductId,
-              ttsSkuId,
-            },
-          });
-        }
-
+      if (result.ok) {
         synced += 1;
-      } catch (error) {
-        const errorPayload = isAxiosError(error) ? error.response?.data : undefined;
-        const message =
-          errorPayload !== undefined
-            ? JSON.stringify(errorPayload)
-            : error instanceof Error
-            ? error.message
-            : 'Unknown error';
-        this.logger.error({ err: error, skuId: summary.id, errorPayload }, 'Failed to sync SKU');
-
-          await this.prisma.productMap.upsert({
-            where: { vtexSkuId: summary.id },
-            update: {
-              status: 'error',
-              lastError: message,
-            shopId,
+        this.logger.info(
+          {
+            skuId: summary.id,
+            ttsProductId: result.ttsProductId,
+            ttsSkuId: result.ttsSkuId,
           },
-          create: {
-            vtexSkuId: summary.id,
-            shopId,
-            status: 'error',
-            lastError: message,
-          },
-        });
-
-        errors[summary.id] = message;
+          'Successfully synced SKU to TikTok',
+        );
+      } else if (result.errorMessage) {
+        errors[summary.id] = result.errorMessage;
       }
     }
+
+    const remaining = skuSummaries.length - processed;
 
     return {
       processed,
       synced,
       failed: processed - synced,
+      remaining,
       errors,
     };
+  }
+
+  /**
+   * Helper que sincroniza **um único SKU**.
+   * - Ideal para o cron chamar sku a sku no futuro.
+   * - Já atualiza o productMap e faz logs de sucesso/erro.
+   */
+  private async syncSingleSku(
+    shopId: string,
+    vtexSkuId: string,
+  ): Promise<{
+    ok: boolean;
+    ttsProductId?: string | null;
+    ttsSkuId?: string | null;
+    errorMessage?: string;
+  }> {
+    try {
+      const sku = await this.vtexClient.getSkuById(vtexSkuId);
+      const productId =
+        sku?.ProductId ?? sku?.productId ?? sku?.ParentProductId;
+      if (!productId) {
+        throw new Error('VTEX SKU did not include productId');
+      }
+
+      const product = await this.vtexClient.getProductById(String(productId));
+      const price = await this.vtexClient.getPrice(vtexSkuId);
+      const images = await this.fetchImagesSafely(vtexSkuId);
+      const quantity = sku.StockBalance ?? sku.stockBalance ?? 0;
+
+      const productInput: TiktokProductInput = {
+        vtexSkuId,
+        sku,
+        product,
+        price,
+        quantity,
+        images,
+      };
+
+      const mapping = await this.prisma.productMap.findUnique({
+        where: { vtexSkuId },
+      });
+
+      let ttsSkuId = mapping?.ttsSkuId ?? null;
+      let ttsProductId = mapping?.ttsProductId ?? null;
+
+      let response: TiktokProductResponse;
+
+      if (!mapping?.ttsProductId) {
+        // criação de produto na TikTok
+        response = await this.tiktokClient.createProduct(shopId, productInput);
+        ({ productId: ttsProductId, skuId: ttsSkuId } =
+          this.extractIdentifiers(response));
+
+        if (!ttsProductId || !ttsSkuId) {
+          throw new Error(
+            `TikTok did not return product_id/sku_id for vtexSkuId=${vtexSkuId}`,
+          );
+        }
+
+        await this.prisma.productMap.upsert({
+          where: { vtexSkuId },
+          update: {
+            status: 'synced',
+            lastError: null,
+            ttsProductId,
+            ttsSkuId,
+            shopId,
+          },
+          create: {
+            vtexSkuId,
+            shopId,
+            status: 'synced',
+            ttsProductId,
+            ttsSkuId,
+          },
+        });
+
+        this.logger.info(
+          { skuId: vtexSkuId, ttsProductId, ttsSkuId },
+          'Successfully synced SKU to TikTok (create)',
+        );
+      } else {
+        // atualização de produto existente na TikTok
+        response = await this.tiktokClient.updateProduct(
+          shopId,
+          mapping.ttsProductId,
+          productInput,
+        );
+        const identifiers = this.extractIdentifiers(response);
+        ttsProductId = identifiers.productId ?? mapping.ttsProductId;
+        ttsSkuId = identifiers.skuId ?? mapping.ttsSkuId;
+
+        if (!identifiers.productId || !identifiers.skuId) {
+          this.logger.warn(
+            {
+              skuId: vtexSkuId,
+              raw: response.raw,
+            },
+            'TikTok updateProduct did not return product_id/sku_id, keeping existing mapping',
+          );
+        }
+
+        await this.prisma.productMap.update({
+          where: { vtexSkuId },
+          data: {
+            status: 'synced',
+            lastError: null,
+            shopId,
+            ttsProductId,
+            ttsSkuId,
+          },
+        });
+
+        this.logger.info(
+          { skuId: vtexSkuId, ttsProductId, ttsSkuId },
+          'Successfully synced SKU to TikTok (update)',
+        );
+      }
+
+      return {
+        ok: true,
+        ttsProductId,
+        ttsSkuId,
+      };
+    } catch (error) {
+      const errorPayload = isAxiosError(error) ? error.response?.data : undefined;
+      const message =
+        errorPayload !== undefined
+          ? JSON.stringify(errorPayload)
+          : error instanceof Error
+          ? error.message
+          : 'Unknown error';
+
+      this.logger.error(
+        { err: error, skuId: vtexSkuId, errorPayload },
+        'Failed to sync SKU',
+      );
+
+      await this.prisma.productMap.upsert({
+        where: { vtexSkuId },
+        update: {
+          status: 'error',
+          lastError: message,
+          shopId,
+        },
+        create: {
+          vtexSkuId,
+          shopId,
+          status: 'error',
+          lastError: message,
+        },
+      });
+
+      return {
+        ok: false,
+        errorMessage: message,
+      };
+    }
   }
 
   private async fetchImagesSafely(skuId: string): Promise<VtexSkuImage[]> {

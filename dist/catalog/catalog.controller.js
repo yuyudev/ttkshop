@@ -11,22 +11,35 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 var __param = (this && this.__param) || function (paramIndex, decorator) {
     return function (target, key) { decorator(target, key, paramIndex); }
 };
+var CatalogController_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.CatalogController = void 0;
 const common_1 = require("@nestjs/common");
 const swagger_1 = require("@nestjs/swagger");
+const nestjs_pino_1 = require("nestjs-pino");
 const auth_guard_1 = require("../auth/auth.guard");
 const catalog_service_1 = require("./catalog.service");
 const dto_1 = require("../common/dto");
-let CatalogController = class CatalogController {
-    constructor(catalogService) {
+let CatalogController = CatalogController_1 = class CatalogController {
+    constructor(catalogService, logger) {
         this.catalogService = catalogService;
+        this.logger = logger;
+        this.logger.setContext(CatalogController_1.name);
     }
     async syncCatalog(shopId, payload) {
         if (!shopId) {
             throw new common_1.BadRequestException('Missing x-tts-shopid header');
         }
-        return this.catalogService.syncCatalog(shopId, payload);
+        this.logger.info({ shopId, payload }, 'Starting catalog sync request');
+        const result = await this.catalogService.syncCatalog(shopId, payload);
+        this.logger.info({
+            shopId,
+            processed: result.processed,
+            synced: result.synced,
+            failed: result.failed,
+            remaining: result.remaining,
+        }, 'Finished catalog sync request');
+        return result;
     }
 };
 exports.CatalogController = CatalogController;
@@ -38,7 +51,7 @@ __decorate([
     __metadata("design:paramtypes", [String, Object]),
     __metadata("design:returntype", Promise)
 ], CatalogController.prototype, "syncCatalog", null);
-exports.CatalogController = CatalogController = __decorate([
+exports.CatalogController = CatalogController = CatalogController_1 = __decorate([
     (0, swagger_1.ApiSecurity)('middlewareApiKey'),
     (0, swagger_1.ApiHeader)({
         name: 'x-api-key',
@@ -47,6 +60,7 @@ exports.CatalogController = CatalogController = __decorate([
     }),
     (0, common_1.UseGuards)(auth_guard_1.ApiKeyAuthGuard),
     (0, common_1.Controller)('internal/catalog'),
-    __metadata("design:paramtypes", [catalog_service_1.CatalogService])
+    __metadata("design:paramtypes", [catalog_service_1.CatalogService,
+        nestjs_pino_1.PinoLogger])
 ], CatalogController);
 //# sourceMappingURL=catalog.controller.js.map

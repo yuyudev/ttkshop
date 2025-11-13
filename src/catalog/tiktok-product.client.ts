@@ -15,7 +15,6 @@ import {
 } from './vtex-catalog.client';
 import * as FormData from 'form-data';
 
-
 export interface TiktokProductInput {
   vtexSkuId: string;
   sku: VtexSkuSummary;
@@ -107,6 +106,11 @@ export class TiktokProductClient {
     const accessToken = await this.tiktokShopService.getAccessToken(shopId);
     const payload = await this.buildProductPayload(shopId, accessToken, input);
 
+    this.logger.info(
+      { shopId, vtexSkuId: input.vtexSkuId },
+      'Creating product on TikTok',
+    );
+
     const { url, headers, body } = this.buildSignedOpenApiRequest(
       '/product/202309/products',
       accessToken,
@@ -114,8 +118,36 @@ export class TiktokProductClient {
     );
 
     const response = await firstValueFrom(this.http.post(url, body, { headers }));
-    return this.parseProductResponse(response.data);
+    const parsed = this.parseProductResponse(response.data);
+
+    const code = response.data?.code;
+    const message = response.data?.message;
+
+    if (code !== undefined && code !== 0) {
+      throw new Error(
+        `TikTok createProduct failed: code=${code} message=${message ?? 'Unknown'}`,
+      );
+    }
+
+    if (!parsed.productId || !parsed.skuId) {
+      throw new Error(
+        `TikTok createProduct did not return product_id/sku_id for vtexSkuId=${input.vtexSkuId}`,
+      );
+    }
+
+    this.logger.info(
+      {
+        shopId,
+        vtexSkuId: input.vtexSkuId,
+        ttsProductId: parsed.productId,
+        ttsSkuId: parsed.skuId,
+      },
+      'Successfully created TikTok product',
+    );
+
+    return parsed;
   }
+
 
   async updateProduct(
     shopId: string,
@@ -125,6 +157,11 @@ export class TiktokProductClient {
     const accessToken = await this.tiktokShopService.getAccessToken(shopId);
     const payload = await this.buildProductPayload(shopId, accessToken, input, { productId });
 
+    this.logger.info(
+      { shopId, vtexSkuId: input.vtexSkuId, productId },
+      'Updating product on TikTok',
+    );
+
     const { url, headers, body } = this.buildSignedOpenApiRequest(
       `/product/202309/products/${productId}`,
       accessToken,
@@ -132,7 +169,39 @@ export class TiktokProductClient {
     );
 
     const response = await firstValueFrom(this.http.put(url, body, { headers }));
-    return this.parseProductResponse(response.data);
+    const parsed = this.parseProductResponse(response.data);
+
+    const code = response.data?.code;
+    const message = response.data?.message;
+
+    if (code !== undefined && code !== 0) {
+      throw new Error(
+        `TikTok updateProduct failed: code=${code} message=${message ?? 'Unknown'}`,
+      );
+    }
+
+    if (!parsed.productId || !parsed.skuId) {
+      this.logger.warn(
+        {
+          shopId,
+          vtexSkuId: input.vtexSkuId,
+          raw: response.data,
+        },
+        'TikTok updateProduct did not return product_id/sku_id, keeping existing mapping',
+      );
+    } else {
+      this.logger.info(
+        {
+          shopId,
+          vtexSkuId: input.vtexSkuId,
+          ttsProductId: parsed.productId,
+          ttsSkuId: parsed.skuId,
+        },
+        'Successfully updated TikTok product',
+      );
+    }
+
+    return parsed;
   }
 
   async updateStock(
@@ -141,7 +210,7 @@ export class TiktokProductClient {
     skuId: string,
     availableQuantity: number,
   ) {
-    // continua usando o fluxo legado SEM assinatura
+    // fluxo legado SEM assinatura
     return this.legacyRequest(shopId, 'post', '/api/warehouse/stock/update', {
       warehouse_id: warehouseId,
       products: [
@@ -177,7 +246,7 @@ export class TiktokProductClient {
 
   /**
    * Cria a request assinada para os endpoints OpenAPI (202309),
-   * seguindo exatamente o fluxo da doc de assinatura.
+   * seguindo o fluxo da doc de assinatura.
    */
   private buildSignedOpenApiRequest(
     path: string,
@@ -200,12 +269,12 @@ export class TiktokProductClient {
       ...(options.extraParams ?? {}),
     };
 
-    // só coloca shop_cipher se NÃO for explicitamente desativado
+    // shop_cipher por padrão (requisitado em vários endpoints de produto)
     if (options.includeShopCipher !== false && this.shopCipher) {
       qs.shop_cipher = this.shopCipher;
     }
 
-    // idem para shop_id
+    // shop_id opcional, mas costuma ser útil
     if (options.includeShopId !== false && this.shopId) {
       qs.shop_id = this.shopId;
     }
@@ -216,7 +285,6 @@ export class TiktokProductClient {
       body,
     });
   }
-
 
   private buildAccessHeaders(accessToken: string) {
     return {
@@ -232,18 +300,40 @@ export class TiktokProductClient {
   }
 
   private parseProductResponse(data: any): TiktokProductResponse {
-    const productId = data?.data?.product_id ?? data?.product_id ?? null;
+    const code = data?.code;
+    const message = data?.message;
+
+    const productId =
+      data?.data?.product_id ??
+      data?.product_id ??
+      null;
+
     const skuId =
       data?.data?.skus?.[0]?.id ??
       data?.data?.sku_id ??
       data?.skus?.[0]?.id ??
       null;
+
+    if (code !== undefined && code !== 0) {
+      this.logger.error(
+        { code, message, raw: data },
+        'TikTok product API returned non-zero code',
+      );
+    } else if (!productId || !skuId) {
+      // Mesmo com code == 0, se não vier id é estranho
+      this.logger.warn(
+        { raw: data },
+        'TikTok product API did not return product_id / sku_id',
+      );
+    }
+
     return {
       productId,
       skuId,
       raw: data,
     };
   }
+
 
   private async buildProductPayload(
     shopId: string,
@@ -274,6 +364,7 @@ export class TiktokProductClient {
     const inventory = [
       {
         warehouse_id: this.warehouseId,
+        // TikTok espera int32, não string
         quantity: Math.floor(quantity),
       },
     ];
@@ -360,7 +451,7 @@ export class TiktokProductClient {
   }
 
   private async ensureImageUri(
-    shopId: string,
+    _shopId: string,
     accessToken: string,
     imageUrl: string,
   ): Promise<string | null> {
@@ -374,7 +465,7 @@ export class TiktokProductClient {
     }
 
     try {
-      // 1) Baixar a imagem do VTEX como binário
+      // 1) Baixar a imagem da VTEX como binário
       const imageResponse = await firstValueFrom(
         this.http.get<ArrayBuffer>(normalized, {
           responseType: 'arraybuffer',
@@ -384,41 +475,34 @@ export class TiktokProductClient {
       const buffer = Buffer.from(imageResponse.data);
 
       // 2) Montar o FormData conforme a doc do TikTok
-      const form = new FormData();
+      const form = new (FormData as any)() as FormData;
 
-      // filename básico a partir da URL
       const filename =
-        normalized.split('/').pop() ||
-        `image-${Date.now()}.jpg`;
+        normalized.split('/').pop() || `image-${Date.now()}.jpg`;
 
       form.append('data', buffer, {
         filename,
-        contentType: 'image/jpeg', // pode ser genérico; TikTok não é chato com isso
+        contentType: 'image/jpeg',
       });
 
-      form.append('use_case', 'MAIN_IMAGE'); // ou IMAGE, dependendo da doc; MAIN_IMAGE é o exemplo oficial
+      form.append('use_case', 'MAIN_IMAGE');
 
-      // 3) Cabeçalhos do form (inclui o boundary)
+      // 3) Headers do form (com boundary)
       const formHeaders = form.getHeaders();
 
-      // 4) Assinar a requisição via buildSignedRequest
+      // 4) Assinar a requisição (multipart => body não entra na assinatura)
       const { url, headers } = buildSignedRequest(
         this.openBase,
         '/product/202309/images/upload',
         this.appKey,
         this.appSecret,
         {
-          qs: {
-            // só o que vai em query string
-            // NADA de shop_cipher aqui, o próprio erro 36009004 já mostrou que não precisa
-          },
+          qs: {},
           headers: {
             ...formHeaders,
             'x-tts-access-token': accessToken,
             Authorization: `Bearer ${accessToken}`,
           },
-          // IMPORTANTE: como é multipart, não passamos o form como body
-          // para o signer (ele não deve entrar na string de assinatura)
           body: undefined,
         },
       );
@@ -439,6 +523,11 @@ export class TiktokProductClient {
       }
 
       this.imageUriCache.set(normalized, uri);
+      this.logger.info(
+        { imageUrl: normalized, uri },
+        'Successfully uploaded image to TikTok',
+      );
+
       return uri;
     } catch (error) {
       const errorPayload = (error as any)?.response?.data;
@@ -487,7 +576,7 @@ export class TiktokProductClient {
   }
 
   private buildSalesAttributes(_input: TiktokProductInput) {
-    // VTEX specifications could be mapped here. For now, we return an empty array.
+    // VTEX specifications poderiam ser mapeadas aqui; por ora, vazio.
     return [];
   }
 

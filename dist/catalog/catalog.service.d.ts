@@ -8,13 +8,16 @@ export declare class CatalogService {
     private readonly tiktokClient;
     private readonly prisma;
     private readonly logger;
+    private readonly MAX_SKUS_PER_RUN;
     constructor(vtexClient: VtexCatalogClient, tiktokClient: TiktokProductClient, prisma: PrismaService, logger: PinoLogger);
     syncCatalog(shopId: string, input: CatalogSyncDto): Promise<{
         processed: number;
         synced: number;
         failed: number;
+        remaining: number;
         errors: Record<string, string>;
     }>;
+    private syncSingleSku;
     private fetchImagesSafely;
     private isNotFoundError;
     private extractIdentifiers;

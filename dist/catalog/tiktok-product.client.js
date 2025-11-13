@@ -62,16 +62,54 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
     async createProduct(shopId, input) {
         const accessToken = await this.tiktokShopService.getAccessToken(shopId);
         const payload = await this.buildProductPayload(shopId, accessToken, input);
+        this.logger.info({ shopId, vtexSkuId: input.vtexSkuId }, 'Creating product on TikTok');
         const { url, headers, body } = this.buildSignedOpenApiRequest('/product/202309/products', accessToken, payload);
         const response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, body, { headers }));
-        return this.parseProductResponse(response.data);
+        const parsed = this.parseProductResponse(response.data);
+        const code = response.data?.code;
+        const message = response.data?.message;
+        if (code !== undefined && code !== 0) {
+            throw new Error(`TikTok createProduct failed: code=${code} message=${message ?? 'Unknown'}`);
+        }
+        if (!parsed.productId || !parsed.skuId) {
+            throw new Error(`TikTok createProduct did not return product_id/sku_id for vtexSkuId=${input.vtexSkuId}`);
+        }
+        this.logger.info({
+            shopId,
+            vtexSkuId: input.vtexSkuId,
+            ttsProductId: parsed.productId,
+            ttsSkuId: parsed.skuId,
+        }, 'Successfully created TikTok product');
+        return parsed;
     }
     async updateProduct(shopId, productId, input) {
         const accessToken = await this.tiktokShopService.getAccessToken(shopId);
         const payload = await this.buildProductPayload(shopId, accessToken, input, { productId });
+        this.logger.info({ shopId, vtexSkuId: input.vtexSkuId, productId }, 'Updating product on TikTok');
         const { url, headers, body } = this.buildSignedOpenApiRequest(`/product/202309/products/${productId}`, accessToken, payload);
         const response = await (0, rxjs_1.firstValueFrom)(this.http.put(url, body, { headers }));
-        return this.parseProductResponse(response.data);
+        const parsed = this.parseProductResponse(response.data);
+        const code = response.data?.code;
+        const message = response.data?.message;
+        if (code !== undefined && code !== 0) {
+            throw new Error(`TikTok updateProduct failed: code=${code} message=${message ?? 'Unknown'}`);
+        }
+        if (!parsed.productId || !parsed.skuId) {
+            this.logger.warn({
+                shopId,
+                vtexSkuId: input.vtexSkuId,
+                raw: response.data,
+            }, 'TikTok updateProduct did not return product_id/sku_id, keeping existing mapping');
+        }
+        else {
+            this.logger.info({
+                shopId,
+                vtexSkuId: input.vtexSkuId,
+                ttsProductId: parsed.productId,
+                ttsSkuId: parsed.skuId,
+            }, 'Successfully updated TikTok product');
+        }
+        return parsed;
     }
     async updateStock(shopId, warehouseId, skuId, availableQuantity) {
         return this.legacyRequest(shopId, 'post', '/api/warehouse/stock/update', {
@@ -133,11 +171,21 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         return url.endsWith('/') ? url.slice(0, -1) : url;
     }
     parseProductResponse(data) {
-        const productId = data?.data?.product_id ?? data?.product_id ?? null;
+        const code = data?.code;
+        const message = data?.message;
+        const productId = data?.data?.product_id ??
+            data?.product_id ??
+            null;
         const skuId = data?.data?.skus?.[0]?.id ??
             data?.data?.sku_id ??
             data?.skus?.[0]?.id ??
             null;
+        if (code !== undefined && code !== 0) {
+            this.logger.error({ code, message, raw: data }, 'TikTok product API returned non-zero code');
+        }
+        else if (!productId || !skuId) {
+            this.logger.warn({ raw: data }, 'TikTok product API did not return product_id / sku_id');
+        }
         return {
             productId,
             skuId,
@@ -232,7 +280,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         }
         return uris.map((uri) => ({ uri }));
     }
-    async ensureImageUri(shopId, accessToken, imageUrl) {
+    async ensureImageUri(_shopId, accessToken, imageUrl) {
         const normalized = imageUrl?.trim();
         if (!normalized) {
             return null;
@@ -246,8 +294,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
             }));
             const buffer = Buffer.from(imageResponse.data);
             const form = new FormData();
-            const filename = normalized.split('/').pop() ||
-                `image-${Date.now()}.jpg`;
+            const filename = normalized.split('/').pop() || `image-${Date.now()}.jpg`;
             form.append('data', buffer, {
                 filename,
                 contentType: 'image/jpeg',
@@ -272,6 +319,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
                 throw new Error('TikTok image upload did not return a URI');
             }
             this.imageUriCache.set(normalized, uri);
+            this.logger.info({ imageUrl: normalized, uri }, 'Successfully uploaded image to TikTok');
             return uri;
         }
         catch (error) {

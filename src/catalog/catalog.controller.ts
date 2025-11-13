@@ -1,9 +1,21 @@
-import { BadRequestException, Body, Controller, Headers, Post, UseGuards } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Headers,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import { ApiHeader, ApiSecurity } from '@nestjs/swagger';
+import { PinoLogger } from 'nestjs-pino';
 
 import { ApiKeyAuthGuard } from '../auth/auth.guard';
 import { CatalogService } from './catalog.service';
-import { CatalogSyncDto, ZodValidationPipe, catalogSyncSchema } from '../common/dto';
+import {
+  CatalogSyncDto,
+  ZodValidationPipe,
+  catalogSyncSchema,
+} from '../common/dto';
 
 @ApiSecurity('middlewareApiKey')
 @ApiHeader({
@@ -14,7 +26,12 @@ import { CatalogSyncDto, ZodValidationPipe, catalogSyncSchema } from '../common/
 @UseGuards(ApiKeyAuthGuard)
 @Controller('internal/catalog')
 export class CatalogController {
-  constructor(private readonly catalogService: CatalogService) {}
+  constructor(
+    private readonly catalogService: CatalogService,
+    private readonly logger: PinoLogger,
+  ) {
+    this.logger.setContext(CatalogController.name);
+  }
 
   @Post('sync')
   async syncCatalog(
@@ -25,6 +42,25 @@ export class CatalogController {
     if (!shopId) {
       throw new BadRequestException('Missing x-tts-shopid header');
     }
-    return this.catalogService.syncCatalog(shopId, payload);
+
+    this.logger.info(
+      { shopId, payload },
+      'Starting catalog sync request',
+    );
+
+    const result = await this.catalogService.syncCatalog(shopId, payload);
+
+    this.logger.info(
+      {
+        shopId,
+        processed: result.processed,
+        synced: result.synced,
+        failed: result.failed,
+        remaining: result.remaining,
+      },
+      'Finished catalog sync request',
+    );
+
+    return result;
   }
 }
