@@ -1,84 +1,111 @@
+// src/common/signer.ts
 import * as crypto from 'crypto';
 
+const EXCLUDE_KEYS = ['access_token', 'sign'] as const;
+
+export interface TikTokRequestOptions {
+  uri: string;
+  qs?: Record<string, any>;
+  headers?: Record<string, string | undefined>;
+  body?: any;
+}
+
 /**
- * Gera a assinatura conforme o algoritmo de assinatura da TikTok Shop:
- *
- * 1. Remover `sign` e `access_token` dos parâmetros.
- * 2. Ordenar os parâmetros em ordem alfabética pelo nome.
- * 3. Concatenar cada par `key + value` em uma string contínua.
- * 4. Montar `stringToSign = path + concatenatedParams + bodyJson(opcional)`.
- * 5. Calcular `sign = HMAC-SHA256(stringToSign, appSecret)` em HEX.
+ * Implementação idêntica à da doc oficial em Node:
+ * https://partner.tiktokshop.com/docv2/page/sign-your-api-request
  */
-export function createTikTokSignature(
-  secret: string,
-  path: string,
-  params: Record<string, string | number | boolean | undefined>,
-  body?: any,
+export function generateTikTokSign(
+  requestOption: TikTokRequestOptions,
+  appSecret: string,
 ): string {
-  // 1) Remove `sign` e `access_token`
-  const keys = Object.keys(params).filter(
-    (key) => key !== 'sign' && key !== 'access_token',
-  );
+  let signString = '';
 
-  // 2) Ordena alfabeticamente
-  keys.sort((a, b) => a.localeCompare(b));
+  // step1: query params (sem sign / access_token) ordenados
+  const params = requestOption.qs || {};
+  const sortedParams = Object.keys(params)
+    .filter((key) => !EXCLUDE_KEYS.includes(key as any))
+    .sort()
+    .map((key) => ({ key, value: params[key] }));
 
-  // 3) Concatena key + value (sem separador)
-  let concatenated = '';
-  for (const key of keys) {
-    const value = params[key];
-    if (value !== undefined && value !== null) {
-      concatenated += `${key}${value}`;
-    }
+  // step2: concat {key}{value}
+  const paramString = sortedParams
+    .map(({ key, value }) => `${key}${value}`)
+    .join('');
+
+  // step3: path da URL
+  const pathname = new URL(requestOption.uri).pathname;
+  signString = `${pathname}${paramString}`;
+
+  // step4: se NÃO for multipart/form-data e tiver body => inclui body JSON
+  const contentTypeHeader =
+    requestOption.headers?.['content-type'] ??
+    requestOption.headers?.['Content-Type'];
+
+  const isMultipart =
+    contentTypeHeader &&
+    contentTypeHeader.toLowerCase().startsWith('multipart/form-data');
+
+  if (!isMultipart && requestOption.body && Object.keys(requestOption.body).length) {
+    const body = JSON.stringify(requestOption.body);
+    signString += body;
   }
 
-  // 4) Monta stringToSign: path + parâmetros + body (se houver)
-  let stringToSign = path + concatenated;
+  // step5: wrap com app_secret
+  signString = `${appSecret}${signString}${appSecret}`;
 
-  if (body && Object.keys(body).length > 0) {
-    // Usa JSON "seco", sem espaços extras
-    stringToSign += JSON.stringify(body);
-  }
-
-  // 5) HMAC-SHA256 da stringToSign usando appSecret como chave
-  const hmac = crypto.createHmac('sha256', secret);
-  hmac.update(stringToSign, 'utf8');
+  // step6: HMAC-SHA256
+  const hmac = crypto.createHmac('sha256', appSecret);
+  hmac.update(signString);
   return hmac.digest('hex');
 }
 
 /**
- * Constrói a query assinada:
- *
- * - Sempre inclui `app_key`, `sign_method` e `timestamp`.
- * - Usa esses parâmetros (mais os extras) para gerar o `sign`.
- * - Depois adiciona o `sign` ao query string.
+ * Helper para montar URL assinada + headers + body,
+ * seguindo o mesmo modelo de uso do `requestOption` da doc.
  */
-export function buildSignedQuery(
-  appKey: string,
-  secret: string,
+export function buildSignedRequest(
+  baseOpenUrl: string,
   path: string,
-  params: Record<string, string | number | boolean | undefined> = {},
-  body?: any,
-): URLSearchParams {
-  const timestamp = Math.floor(Date.now() / 1000);
+  appKey: string,
+  appSecret: string,
+  options: {
+    qs?: Record<string, any>;
+    headers?: Record<string, string>;
+    body?: any;
+  },
+): { url: string; headers: Record<string, string>; body?: any } {
+  const uri = `${baseOpenUrl}${path}`;
 
-  // Parâmetros usados na assinatura
-  const paramsForSignature: Record<string, string | number | boolean | undefined> = {
+  const qs: Record<string, any> = {
     app_key: appKey,
-    sign_method: 'HmacSHA256',
-    timestamp,
-    ...params,
+    timestamp: Math.floor(Date.now() / 1000), // unix em segundos
+    ...(options.qs ?? {}),
   };
 
-  const sign = createTikTokSignature(secret, path, paramsForSignature, body);
+  const headers: Record<string, string> = {
+    ...(options.headers ?? {}),
+  };
 
-  // Monta query final (incluindo sign)
-  const query = new URLSearchParams();
-  Object.entries({ ...paramsForSignature, sign }).forEach(([k, v]) => {
+  const requestOption: TikTokRequestOptions = {
+    uri,
+    qs,
+    headers,
+    body: options.body,
+  };
+
+  const sign = generateTikTokSign(requestOption, appSecret);
+  qs.sign = sign;
+
+  const search = new URLSearchParams();
+  Object.entries(qs).forEach(([k, v]) => {
     if (v !== undefined && v !== null) {
-      query.append(k, String(v));
+      search.append(k, String(v));
     }
   });
 
-  return query;
+  return {
+    url: `${uri}?${search.toString()}`,
+    headers,
+    body: options.body,
+  };
 }

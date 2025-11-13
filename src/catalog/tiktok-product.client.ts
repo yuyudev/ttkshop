@@ -1,3 +1,4 @@
+// src/catalog/tiktok-product.client.ts
 import { HttpService } from '@nestjs/axios';
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -6,12 +7,14 @@ import { PinoLogger } from 'nestjs-pino';
 
 import { AppConfig } from '../common/config';
 import { TiktokShopService } from '../auth/tiktokshop.service';
-import { buildSignedQuery } from '../common/signer';
+import { buildSignedRequest } from '../common/signer';
 import {
   VtexProduct,
   VtexSkuImage,
   VtexSkuSummary,
 } from './vtex-catalog.client';
+import * as FormData from 'form-data';
+
 
 export interface TiktokProductInput {
   vtexSkuId: string;
@@ -74,7 +77,8 @@ export class TiktokProductClient {
       infer: true,
     });
     this.currency = this.configService.get<string>('TIKTOK_CURRENCY', { infer: true }) ?? 'BRL';
-    this.saveMode = this.configService.get<string>('TIKTOK_SAVE_MODE', { infer: true }) ?? 'LISTING';
+    this.saveMode =
+      this.configService.get<string>('TIKTOK_SAVE_MODE', { infer: true }) ?? 'LISTING';
     this.fallbackDescription =
       this.configService.get<string>('TIKTOK_DESCRIPTION_FALLBACK', { infer: true }) ??
       'No description provided.';
@@ -103,13 +107,13 @@ export class TiktokProductClient {
     const accessToken = await this.tiktokShopService.getAccessToken(shopId);
     const payload = await this.buildProductPayload(shopId, accessToken, input);
 
-    // IMPORTANTE: incluir o body na assinatura
-    const url = this.buildSignedUrl('/product/202309/products', {
-      body: payload,
-    });
+    const { url, headers, body } = this.buildSignedOpenApiRequest(
+      '/product/202309/products',
+      accessToken,
+      payload,
+    );
 
-    const headers = this.buildHeaders(accessToken);
-    const response = await firstValueFrom(this.http.post(url, payload, { headers }));
+    const response = await firstValueFrom(this.http.post(url, body, { headers }));
     return this.parseProductResponse(response.data);
   }
 
@@ -121,14 +125,13 @@ export class TiktokProductClient {
     const accessToken = await this.tiktokShopService.getAccessToken(shopId);
     const payload = await this.buildProductPayload(shopId, accessToken, input, { productId });
 
-    // path com o productId faz parte do stringToSign
-    const path = `/product/202309/products/${productId}`;
-    const url = this.buildSignedUrl(path, {
-      body: payload,
-    });
+    const { url, headers, body } = this.buildSignedOpenApiRequest(
+      `/product/202309/products/${productId}`,
+      accessToken,
+      payload,
+    );
 
-    const headers = this.buildHeaders(accessToken);
-    const response = await firstValueFrom(this.http.put(url, payload, { headers }));
+    const response = await firstValueFrom(this.http.put(url, body, { headers }));
     return this.parseProductResponse(response.data);
   }
 
@@ -138,6 +141,7 @@ export class TiktokProductClient {
     skuId: string,
     availableQuantity: number,
   ) {
+    // continua usando o fluxo legado SEM assinatura
     return this.legacyRequest(shopId, 'post', '/api/warehouse/stock/update', {
       warehouse_id: warehouseId,
       products: [
@@ -157,11 +161,7 @@ export class TiktokProductClient {
   ) {
     const accessToken = await this.tiktokShopService.getAccessToken(shopId);
     const url = `${this.openBase}${path}`;
-    const headers = {
-      'Content-Type': 'application/json',
-      'x-tts-access-token': accessToken,
-      Authorization: `Bearer ${accessToken}`,
-    };
+    const headers = this.buildAccessHeaders(accessToken);
 
     switch (method) {
       case 'get':
@@ -176,36 +176,49 @@ export class TiktokProductClient {
   }
 
   /**
-   * Monta URL com assinatura correta.
-   * `body` é usado na assinatura quando for POST/PUT.
+   * Cria a request assinada para os endpoints OpenAPI (202309),
+   * seguindo exatamente o fluxo da doc de assinatura.
    */
-  private buildSignedUrl(
+  private buildSignedOpenApiRequest(
     path: string,
+    accessToken: string,
+    body?: any,
     options: {
-      extraParams?: Record<string, string | number | boolean | undefined>;
+      extraParams?: Record<string, any>;
       includeShopCipher?: boolean;
       includeShopId?: boolean;
-      body?: any;
     } = {},
-  ): string {
-    const params: Record<string, string | number | boolean | undefined> = {
+  ) {
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      Accept: 'application/json',
+      'x-tts-access-token': accessToken,
+      Authorization: `Bearer ${accessToken}`,
+    };
+
+    const qs: Record<string, any> = {
       ...(options.extraParams ?? {}),
     };
 
-    // Por padrão incluímos shop_cipher e shop_id (exigidos nos endpoints de product)
-    if (options.includeShopCipher !== false) {
-      params.shop_cipher = this.shopCipher;
-    }
-    if (options.includeShopId !== false && this.shopId) {
-      params.shop_id = this.shopId;
+    // só coloca shop_cipher se NÃO for explicitamente desativado
+    if (options.includeShopCipher !== false && this.shopCipher) {
+      qs.shop_cipher = this.shopCipher;
     }
 
-    // buildSignedQuery já adiciona app_key, sign_method e timestamp internamente
-    const query = buildSignedQuery(this.appKey, this.appSecret, path, params, options.body);
-    return `${this.openBase}${path}?${query.toString()}`;
+    // idem para shop_id
+    if (options.includeShopId !== false && this.shopId) {
+      qs.shop_id = this.shopId;
+    }
+
+    return buildSignedRequest(this.openBase, path, this.appKey, this.appSecret, {
+      qs,
+      headers,
+      body,
+    });
   }
 
-  private buildHeaders(accessToken: string) {
+
+  private buildAccessHeaders(accessToken: string) {
     return {
       'Content-Type': 'application/json',
       Accept: 'application/json',
@@ -261,7 +274,7 @@ export class TiktokProductClient {
     const inventory = [
       {
         warehouse_id: this.warehouseId,
-        quantity: Math.floor(quantity).toString(),
+        quantity: Math.floor(quantity),
       },
     ];
     const identifierCode = this.buildIdentifierCode(input.sku);
@@ -361,23 +374,58 @@ export class TiktokProductClient {
     }
 
     try {
-      const body = {
-        image_url: normalized,
-      };
+      // 1) Baixar a imagem do VTEX como binário
+      const imageResponse = await firstValueFrom(
+        this.http.get<ArrayBuffer>(normalized, {
+          responseType: 'arraybuffer',
+        }),
+      );
 
-      const url = this.buildSignedUrl('/product/202309/images/upload', {
-        includeShopCipher: false,
-        includeShopId: false,
-        body,
+      const buffer = Buffer.from(imageResponse.data);
+
+      // 2) Montar o FormData conforme a doc do TikTok
+      const form = new FormData();
+
+      // filename básico a partir da URL
+      const filename =
+        normalized.split('/').pop() ||
+        `image-${Date.now()}.jpg`;
+
+      form.append('data', buffer, {
+        filename,
+        contentType: 'image/jpeg', // pode ser genérico; TikTok não é chato com isso
       });
 
-      const headers = this.buildHeaders(accessToken);
+      form.append('use_case', 'MAIN_IMAGE'); // ou IMAGE, dependendo da doc; MAIN_IMAGE é o exemplo oficial
+
+      // 3) Cabeçalhos do form (inclui o boundary)
+      const formHeaders = form.getHeaders();
+
+      // 4) Assinar a requisição via buildSignedRequest
+      const { url, headers } = buildSignedRequest(
+        this.openBase,
+        '/product/202309/images/upload',
+        this.appKey,
+        this.appSecret,
+        {
+          qs: {
+            // só o que vai em query string
+            // NADA de shop_cipher aqui, o próprio erro 36009004 já mostrou que não precisa
+          },
+          headers: {
+            ...formHeaders,
+            'x-tts-access-token': accessToken,
+            Authorization: `Bearer ${accessToken}`,
+          },
+          // IMPORTANTE: como é multipart, não passamos o form como body
+          // para o signer (ele não deve entrar na string de assinatura)
+          body: undefined,
+        },
+      );
+
+      // 5) Enviar o POST com o form como body real
       const response = await firstValueFrom(
-        this.http.post(
-          url,
-          body,
-          { headers },
-        ),
+        this.http.post(url, form, { headers }),
       );
 
       const uri =
@@ -454,7 +502,8 @@ export class TiktokProductClient {
 
     const length =
       this.extractDimension(input.sku.PackedLength ?? input.sku.Length) ?? fallbackLength;
-    const width = this.extractDimension(input.sku.PackedWidth ?? input.sku.Width) ?? fallbackWidth;
+    const width =
+      this.extractDimension(input.sku.PackedWidth ?? input.sku.Width) ?? fallbackWidth;
     const height =
       this.extractDimension(input.sku.PackedHeight ?? input.sku.Height) ?? fallbackHeight;
 
@@ -468,7 +517,9 @@ export class TiktokProductClient {
 
   private buildPackageWeight(input: TiktokProductInput) {
     const weight =
-      this.extractWeight(input.sku.PackedWeightKg ?? input.sku.WeightKg ?? input.sku.RealWeightKg) ??
+      this.extractWeight(
+        input.sku.PackedWeightKg ?? input.sku.WeightKg ?? input.sku.RealWeightKg,
+      ) ??
       this.packageWeight ??
       1;
 
@@ -515,7 +566,9 @@ export class TiktokProductClient {
       if (Array.isArray(value)) {
         const cleaned = value
           .map((item) =>
-            typeof item === 'object' && item !== null ? this.cleanPayload(item as any) : item,
+            typeof item === 'object' && item !== null
+              ? this.cleanPayload(item as any)
+              : item,
           )
           .filter((item) => item !== undefined && item !== null);
         if (cleaned.length > 0) {

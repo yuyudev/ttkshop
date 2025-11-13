@@ -48,8 +48,8 @@ export declare class TiktokProductClient {
     updateProduct(shopId: string, productId: string, input: TiktokProductInput): Promise<TiktokProductResponse>;
     updateStock(shopId: string, warehouseId: string, skuId: string, availableQuantity: number): Promise<import("axios").AxiosResponse<any, any, {}>>;
     private legacyRequest;
-    private buildSignedUrl;
-    private buildHeaders;
+    private buildSignedOpenApiRequest;
+    private buildAccessHeaders;
     private normalizeBaseUrl;
     private parseProductResponse;
     private buildProductPayload;

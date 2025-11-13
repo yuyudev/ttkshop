@@ -18,6 +18,7 @@ const rxjs_1 = require("rxjs");
 const nestjs_pino_1 = require("nestjs-pino");
 const tiktokshop_service_1 = require("../auth/tiktokshop.service");
 const signer_1 = require("../common/signer");
+const FormData = require("form-data");
 let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
     constructor(http, configService, tiktokShopService, logger) {
         this.http = http;
@@ -39,7 +40,8 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
             infer: true,
         });
         this.currency = this.configService.get('TIKTOK_CURRENCY', { infer: true }) ?? 'BRL';
-        this.saveMode = this.configService.get('TIKTOK_SAVE_MODE', { infer: true }) ?? 'LISTING';
+        this.saveMode =
+            this.configService.get('TIKTOK_SAVE_MODE', { infer: true }) ?? 'LISTING';
         this.fallbackDescription =
             this.configService.get('TIKTOK_DESCRIPTION_FALLBACK', { infer: true }) ??
                 'No description provided.';
@@ -60,22 +62,15 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
     async createProduct(shopId, input) {
         const accessToken = await this.tiktokShopService.getAccessToken(shopId);
         const payload = await this.buildProductPayload(shopId, accessToken, input);
-        const url = this.buildSignedUrl('/product/202309/products', {
-            body: payload,
-        });
-        const headers = this.buildHeaders(accessToken);
-        const response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, payload, { headers }));
+        const { url, headers, body } = this.buildSignedOpenApiRequest('/product/202309/products', accessToken, payload);
+        const response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, body, { headers }));
         return this.parseProductResponse(response.data);
     }
     async updateProduct(shopId, productId, input) {
         const accessToken = await this.tiktokShopService.getAccessToken(shopId);
         const payload = await this.buildProductPayload(shopId, accessToken, input, { productId });
-        const path = `/product/202309/products/${productId}`;
-        const url = this.buildSignedUrl(path, {
-            body: payload,
-        });
-        const headers = this.buildHeaders(accessToken);
-        const response = await (0, rxjs_1.firstValueFrom)(this.http.put(url, payload, { headers }));
+        const { url, headers, body } = this.buildSignedOpenApiRequest(`/product/202309/products/${productId}`, accessToken, payload);
+        const response = await (0, rxjs_1.firstValueFrom)(this.http.put(url, body, { headers }));
         return this.parseProductResponse(response.data);
     }
     async updateStock(shopId, warehouseId, skuId, availableQuantity) {
@@ -92,11 +87,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
     async legacyRequest(shopId, method, path, payload) {
         const accessToken = await this.tiktokShopService.getAccessToken(shopId);
         const url = `${this.openBase}${path}`;
-        const headers = {
-            'Content-Type': 'application/json',
-            'x-tts-access-token': accessToken,
-            Authorization: `Bearer ${accessToken}`,
-        };
+        const headers = this.buildAccessHeaders(accessToken);
         switch (method) {
             case 'get':
                 return (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers }));
@@ -108,20 +99,29 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
                 throw new Error(`Unsupported method ${method}`);
         }
     }
-    buildSignedUrl(path, options = {}) {
-        const params = {
+    buildSignedOpenApiRequest(path, accessToken, body, options = {}) {
+        const headers = {
+            'content-type': 'application/json',
+            Accept: 'application/json',
+            'x-tts-access-token': accessToken,
+            Authorization: `Bearer ${accessToken}`,
+        };
+        const qs = {
             ...(options.extraParams ?? {}),
         };
-        if (options.includeShopCipher !== false) {
-            params.shop_cipher = this.shopCipher;
+        if (options.includeShopCipher !== false && this.shopCipher) {
+            qs.shop_cipher = this.shopCipher;
         }
         if (options.includeShopId !== false && this.shopId) {
-            params.shop_id = this.shopId;
+            qs.shop_id = this.shopId;
         }
-        const query = (0, signer_1.buildSignedQuery)(this.appKey, this.appSecret, path, params, options.body);
-        return `${this.openBase}${path}?${query.toString()}`;
+        return (0, signer_1.buildSignedRequest)(this.openBase, path, this.appKey, this.appSecret, {
+            qs,
+            headers,
+            body,
+        });
     }
-    buildHeaders(accessToken) {
+    buildAccessHeaders(accessToken) {
         return {
             'Content-Type': 'application/json',
             Accept: 'application/json',
@@ -163,7 +163,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         const inventory = [
             {
                 warehouse_id: this.warehouseId,
-                quantity: Math.floor(quantity).toString(),
+                quantity: Math.floor(quantity),
             },
         ];
         const identifierCode = this.buildIdentifierCode(input.sku);
@@ -241,16 +241,29 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
             return this.imageUriCache.get(normalized) ?? null;
         }
         try {
-            const body = {
-                image_url: normalized,
-            };
-            const url = this.buildSignedUrl('/product/202309/images/upload', {
-                includeShopCipher: false,
-                includeShopId: false,
-                body,
+            const imageResponse = await (0, rxjs_1.firstValueFrom)(this.http.get(normalized, {
+                responseType: 'arraybuffer',
+            }));
+            const buffer = Buffer.from(imageResponse.data);
+            const form = new FormData();
+            const filename = normalized.split('/').pop() ||
+                `image-${Date.now()}.jpg`;
+            form.append('data', buffer, {
+                filename,
+                contentType: 'image/jpeg',
             });
-            const headers = this.buildHeaders(accessToken);
-            const response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, body, { headers }));
+            form.append('use_case', 'MAIN_IMAGE');
+            const formHeaders = form.getHeaders();
+            const { url, headers } = (0, signer_1.buildSignedRequest)(this.openBase, '/product/202309/images/upload', this.appKey, this.appSecret, {
+                qs: {},
+                headers: {
+                    ...formHeaders,
+                    'x-tts-access-token': accessToken,
+                    Authorization: `Bearer ${accessToken}`,
+                },
+                body: undefined,
+            });
+            const response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, form, { headers }));
             const uri = response.data?.data?.uri ??
                 response.data?.data?.image?.uri ??
                 response.data?.uri ??
@@ -357,7 +370,9 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
             }
             if (Array.isArray(value)) {
                 const cleaned = value
-                    .map((item) => typeof item === 'object' && item !== null ? this.cleanPayload(item) : item)
+                    .map((item) => typeof item === 'object' && item !== null
+                    ? this.cleanPayload(item)
+                    : item)
                     .filter((item) => item !== undefined && item !== null);
                 if (cleaned.length > 0) {
                     clone[key] = cleaned;
