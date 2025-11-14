@@ -4,17 +4,23 @@ import { PinoLogger } from 'nestjs-pino';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { CatalogSyncDto } from '../common/dto';
-import { VtexCatalogClient, VtexSkuImage } from './vtex-catalog.client';
+import {
+  VtexCatalogClient,
+  VtexProduct,
+  VtexSkuImage,
+  VtexSkuSummary,
+} from './vtex-catalog.client';
 import {
   TiktokProductClient,
   TiktokProductInput,
-  TiktokProductResponse,
+  TiktokProductSkuInput,
 } from './tiktok-product.client';
 
 @Injectable()
 export class CatalogService {
   // limite de SKUs processados por execução para evitar timeout
   private readonly MAX_SKUS_PER_RUN = 50;
+  private readonly productSkuCache = new Map<string, string[]>();
 
   constructor(
     private readonly vtexClient: VtexCatalogClient,
@@ -38,32 +44,46 @@ export class CatalogService {
     let processed = 0;
     let synced = 0;
     const errors: Record<string, string> = {};
+    const processedSkuIds = new Set<string>();
 
     for (const summary of skuSummaries) {
+      const skuId = String(summary.id);
+      if (!skuId || processedSkuIds.has(skuId)) {
+        continue;
+      }
+
       if (processed >= this.MAX_SKUS_PER_RUN) {
         break;
       }
 
-      processed += 1;
+      const remainingBudget = this.MAX_SKUS_PER_RUN - processed;
+      const result = await this.syncProductBySku(
+        shopId,
+        skuId,
+        processedSkuIds,
+        remainingBudget,
+        processed === 0,
+      );
 
-      const result = await this.syncSingleSku(shopId, summary.id);
-
-      if (result.ok) {
-        synced += 1;
-        this.logger.info(
-          {
-            skuId: summary.id,
-            ttsProductId: result.ttsProductId,
-            ttsSkuId: result.ttsSkuId,
-          },
-          'Successfully synced SKU to TikTok',
+      if (result.budgetExceeded) {
+        this.logger.debug(
+          { shopId, skuId, remainingBudget },
+          'Catalog sync budget reached; stopping current run',
         );
-      } else if (result.errorMessage) {
-        errors[summary.id] = result.errorMessage;
+        break;
+      }
+
+      processed += result.processedSkus;
+      synced += result.syncedSkus;
+
+      Object.assign(errors, result.errors);
+
+      if (processed >= this.MAX_SKUS_PER_RUN) {
+        break;
       }
     }
 
-    const remaining = skuSummaries.length - processed;
+    const remaining = Math.max(skuSummaries.length - processedSkuIds.size, 0);
 
     return {
       processed,
@@ -74,127 +94,129 @@ export class CatalogService {
     };
   }
 
-  /**
-   * Helper que sincroniza **um único SKU**.
-   * - Ideal para o cron chamar sku a sku no futuro.
-   * - Já atualiza o productMap e faz logs de sucesso/erro.
-   */
-  private async syncSingleSku(
+  private async syncProductBySku(
     shopId: string,
     vtexSkuId: string,
+    processedSkuIds: Set<string>,
+    remainingBudget: number,
+    allowBudgetOverflow: boolean,
   ): Promise<{
-    ok: boolean;
-    ttsProductId?: string | null;
-    ttsSkuId?: string | null;
-    errorMessage?: string;
+    processedSkus: number;
+    syncedSkus: number;
+    errors: Record<string, string>;
+    budgetExceeded?: boolean;
   }> {
+    const errors: Record<string, string> = {};
+    let relatedSkuIds: string[] = [];
+    let productId: string | null = null;
+
     try {
       const sku = await this.vtexClient.getSkuById(vtexSkuId);
-      const productId =
-        sku?.ProductId ?? sku?.productId ?? sku?.ParentProductId;
+      productId = this.extractProductId(sku);
       if (!productId) {
         throw new Error('VTEX SKU did not include productId');
       }
 
-      const product = await this.vtexClient.getProductById(String(productId));
-      const price = await this.vtexClient.getPrice(vtexSkuId);
-      const images = await this.fetchImagesSafely(vtexSkuId);
-      const quantity = sku.StockBalance ?? sku.stockBalance ?? 0;
+      const product = await this.vtexClient.getProductById(productId);
+      relatedSkuIds = await this.getSkuIdsForProduct(productId, vtexSkuId);
+
+      if (
+        !allowBudgetOverflow &&
+        remainingBudget >= 0 &&
+        relatedSkuIds.length > remainingBudget
+      ) {
+        return {
+          processedSkus: 0,
+          syncedSkus: 0,
+          errors,
+          budgetExceeded: true,
+        };
+      }
+
+      const mappings = await this.prisma.productMap.findMany({
+        where: { vtexSkuId: { in: relatedSkuIds } },
+      });
+      const mappingBySkuId = new Map(mappings.map((mapping) => [mapping.vtexSkuId, mapping]));
+
+      const skuInputs: TiktokProductSkuInput[] = [];
+
+      for (const skuId of relatedSkuIds) {
+        const skuDetails =
+          skuId === vtexSkuId ? sku : await this.vtexClient.getSkuById(skuId);
+        const price = await this.vtexClient.getPrice(skuId);
+        const images = await this.fetchImagesSafely(skuId);
+        const quantity = skuDetails.StockBalance ?? skuDetails.stockBalance ?? 0;
+        const mapping = mappingBySkuId.get(skuId);
+
+        skuInputs.push({
+          vtexSkuId: skuId,
+          sku: skuDetails,
+          price,
+          quantity,
+          images,
+          sizeLabel: this.deriveSizeLabel(product, skuDetails),
+          ttsSkuId: mapping?.ttsSkuId ?? null,
+        });
+      }
 
       const productInput: TiktokProductInput = {
-        vtexSkuId,
-        sku,
         product,
-        price,
-        quantity,
-        images,
+        skus: skuInputs,
       };
 
-      const mapping = await this.prisma.productMap.findUnique({
-        where: { vtexSkuId },
-      });
+      const existingProductId = this.selectExistingProductId(mappings);
 
-      let ttsSkuId = mapping?.ttsSkuId ?? null;
-      let ttsProductId = mapping?.ttsProductId ?? null;
+      const response = existingProductId
+        ? await this.tiktokClient.updateProduct(shopId, existingProductId, productInput)
+        : await this.tiktokClient.createProduct(shopId, productInput);
 
-      let response: TiktokProductResponse;
+      const targetProductId = response.productId ?? existingProductId ?? null;
 
-      if (!mapping?.ttsProductId) {
-        // criação de produto na TikTok
-        response = await this.tiktokClient.createProduct(shopId, productInput);
-        ({ productId: ttsProductId, skuId: ttsSkuId } =
-          this.extractIdentifiers(response));
+      let syncedSkus = 0;
 
-        if (!ttsProductId || !ttsSkuId) {
-          throw new Error(
-            `TikTok did not return product_id/sku_id for vtexSkuId=${vtexSkuId}`,
-          );
-        }
+      for (const skuInput of skuInputs) {
+        const mappedSkuId =
+          response.skuIds[String(skuInput.vtexSkuId)] ??
+          skuInput.ttsSkuId ??
+          null;
 
         await this.prisma.productMap.upsert({
-          where: { vtexSkuId },
+          where: { vtexSkuId: skuInput.vtexSkuId },
           update: {
             status: 'synced',
             lastError: null,
-            ttsProductId,
-            ttsSkuId,
             shopId,
+            ttsProductId: targetProductId,
+            ttsSkuId: mappedSkuId,
           },
           create: {
-            vtexSkuId,
+            vtexSkuId: skuInput.vtexSkuId,
             shopId,
             status: 'synced',
-            ttsProductId,
-            ttsSkuId,
+            ttsProductId: targetProductId,
+            ttsSkuId: mappedSkuId,
           },
         });
 
+        processedSkuIds.add(skuInput.vtexSkuId);
+        syncedSkus += 1;
+
         this.logger.info(
-          { skuId: vtexSkuId, ttsProductId, ttsSkuId },
-          'Successfully synced SKU to TikTok (create)',
-        );
-      } else {
-        // atualização de produto existente na TikTok
-        response = await this.tiktokClient.updateProduct(
-          shopId,
-          mapping.ttsProductId,
-          productInput,
-        );
-        const identifiers = this.extractIdentifiers(response);
-        ttsProductId = identifiers.productId ?? mapping.ttsProductId;
-        ttsSkuId = identifiers.skuId ?? mapping.ttsSkuId;
-
-        if (!identifiers.productId || !identifiers.skuId) {
-          this.logger.warn(
-            {
-              skuId: vtexSkuId,
-              raw: response.raw,
-            },
-            'TikTok updateProduct did not return product_id/sku_id, keeping existing mapping',
-          );
-        }
-
-        await this.prisma.productMap.update({
-          where: { vtexSkuId },
-          data: {
-            status: 'synced',
-            lastError: null,
-            shopId,
-            ttsProductId,
-            ttsSkuId,
+          {
+            skuId: skuInput.vtexSkuId,
+            ttsProductId: targetProductId,
+            ttsSkuId: mappedSkuId,
           },
-        });
-
-        this.logger.info(
-          { skuId: vtexSkuId, ttsProductId, ttsSkuId },
-          'Successfully synced SKU to TikTok (update)',
+          existingProductId
+            ? 'Successfully synced SKU to TikTok (update)'
+            : 'Successfully synced SKU to TikTok (create)',
         );
       }
 
       return {
-        ok: true,
-        ttsProductId,
-        ttsSkuId,
+        processedSkus: skuInputs.length,
+        syncedSkus,
+        errors,
       };
     } catch (error) {
       const errorPayload = isAxiosError(error) ? error.response?.data : undefined;
@@ -206,30 +228,243 @@ export class CatalogService {
           : 'Unknown error';
 
       this.logger.error(
-        { err: error, skuId: vtexSkuId, errorPayload },
-        'Failed to sync SKU',
+        {
+          err: error,
+          skuId: vtexSkuId,
+          relatedSkuIds,
+          productId,
+          errorPayload,
+        },
+        'Failed to sync VTEX product to TikTok',
       );
 
-      await this.prisma.productMap.upsert({
-        where: { vtexSkuId },
-        update: {
-          status: 'error',
-          lastError: message,
-          shopId,
-        },
-        create: {
-          vtexSkuId,
-          shopId,
-          status: 'error',
-          lastError: message,
-        },
-      });
+      const affectedSkuIds = relatedSkuIds.length ? relatedSkuIds : [vtexSkuId];
+
+      for (const skuId of affectedSkuIds) {
+        processedSkuIds.add(skuId);
+
+        await this.prisma.productMap.upsert({
+          where: { vtexSkuId: skuId },
+          update: {
+            status: 'error',
+            lastError: message,
+            shopId,
+          },
+          create: {
+            vtexSkuId: skuId,
+            shopId,
+            status: 'error',
+            lastError: message,
+          },
+        });
+
+        errors[skuId] = message;
+      }
 
       return {
-        ok: false,
-        errorMessage: message,
+        processedSkus: affectedSkuIds.length,
+        syncedSkus: 0,
+        errors,
       };
     }
+  }
+
+  private extractProductId(sku: VtexSkuSummary): string | null {
+    const productId =
+      sku?.ProductId ??
+      sku?.productId ??
+      (sku as any)?.ParentProductId ??
+      null;
+    return productId ? String(productId) : null;
+  }
+
+  private async getSkuIdsForProduct(productId: string, fallbackSkuId: string): Promise<string[]> {
+    const cached = this.productSkuCache.get(productId);
+    if (cached && cached.length) {
+      if (!cached.includes(fallbackSkuId)) {
+        const updated = Array.from(new Set([...cached, fallbackSkuId].map(String)));
+        this.productSkuCache.set(productId, updated);
+        return updated;
+      }
+      return cached;
+    }
+
+    let relatedSkuIds: string[] = [];
+
+    try {
+      const productSkusPayload = await this.vtexClient.getProductWithSkus(productId);
+      relatedSkuIds = this.normalizeProductSkuIds(productSkusPayload);
+    } catch (error) {
+      if (this.isNotFoundError(error)) {
+        this.logger.warn(
+          { productId },
+          'VTEX product returned 404 for product SKUs endpoint; attempting search fallback',
+        );
+        relatedSkuIds = [];
+      } else {
+        throw error;
+      }
+    }
+
+    if (!relatedSkuIds.length) {
+      try {
+        const searchPayload = await this.vtexClient.searchProductWithItems(productId);
+        relatedSkuIds = this.extractSkuIdsFromSearchPayload(searchPayload);
+      } catch (error) {
+        if (this.isNotFoundError(error)) {
+          this.logger.warn(
+            { productId },
+            'VTEX product search returned 404; using fallback SKU only',
+          );
+        } else {
+          this.logger.error(
+            { productId, err: error },
+            'Failed to retrieve VTEX product SKUs via search fallback',
+          );
+        }
+        relatedSkuIds = [];
+      }
+    }
+
+    if (!relatedSkuIds.includes(fallbackSkuId)) {
+      relatedSkuIds.push(fallbackSkuId);
+    }
+
+    const normalized = Array.from(new Set(relatedSkuIds.map(String)));
+    this.productSkuCache.set(productId, normalized);
+    return normalized;
+  }
+
+  private normalizeProductSkuIds(raw: unknown): string[] {
+    const candidates: string[] = [];
+
+    const register = (value: unknown) => {
+      if (value === undefined || value === null) {
+        return;
+      }
+      const id = String(value);
+      if (id) {
+        candidates.push(id);
+      }
+    };
+
+    const handleItem = (item: any) => {
+      if (!item) {
+        return;
+      }
+      register(item.Id ?? item.id ?? item.SkuId ?? item.skuId ?? item.skuID ?? item);
+    };
+
+    if (Array.isArray(raw)) {
+      raw.forEach(handleItem);
+    } else if (raw && typeof raw === 'object') {
+      const obj = raw as Record<string, unknown>;
+      if (Array.isArray(obj.items)) {
+        obj.items.forEach(handleItem);
+      }
+      if (Array.isArray(obj.skus)) {
+        obj.skus.forEach(handleItem);
+      }
+      if (Array.isArray(obj.data)) {
+        obj.data.forEach(handleItem);
+      }
+    }
+
+    return Array.from(new Set(candidates));
+  }
+
+  private extractSkuIdsFromSearchPayload(raw: unknown): string[] {
+    if (!raw) {
+      return [];
+    }
+
+    const results = Array.isArray(raw) ? raw : [raw];
+    const skuIds: string[] = [];
+
+    for (const product of results) {
+      if (!product || typeof product !== 'object') {
+        continue;
+      }
+
+      const items = Array.isArray((product as any).items) ? (product as any).items : [];
+      for (const item of items) {
+        if (!item || typeof item !== 'object') {
+          continue;
+        }
+        const itemId =
+          item.itemId ??
+          item.id ??
+          item.skuId ??
+          item.ItemId ??
+          item.SkuId ??
+          item.SkuID ??
+          null;
+        if (itemId) {
+          skuIds.push(String(itemId));
+        }
+      }
+    }
+
+    return Array.from(new Set(skuIds));
+  }
+
+  private selectExistingProductId(
+    mappings: Array<{ ttsProductId: string | null }>,
+  ): string | null {
+    const productIds = Array.from(
+      new Set(
+        mappings
+          .map((mapping) => mapping.ttsProductId)
+          .filter((value): value is string => Boolean(value)),
+      ),
+    );
+
+    if (productIds.length > 1) {
+      this.logger.warn(
+        { productIds },
+        'Multiple TikTok product IDs found for VTEX product; using the first one',
+      );
+    }
+
+    return productIds[0] ?? null;
+  }
+
+  private deriveSizeLabel(product: VtexProduct, sku: VtexSkuSummary): string | undefined {
+    const productName = product.Name?.toString().trim().toLowerCase() ?? '';
+    const rawSkuName =
+      sku.Name ??
+      sku.name ??
+      (sku as any)?.NameComplete ??
+      '';
+    const skuName = rawSkuName ? rawSkuName.toString().trim() : '';
+
+    if (productName && skuName.toLowerCase().startsWith(productName)) {
+      const suffix = skuName.slice(productName.length).trim();
+      if (suffix) {
+        return suffix;
+      }
+    }
+
+    if (skuName.includes(' ')) {
+      const candidate = skuName.split(/\s+/).pop();
+      if (candidate) {
+        return candidate.trim();
+      }
+    }
+
+    const refId = (sku as any)?.RefId ?? (sku as any)?.refId;
+    if (typeof refId === 'string' && refId.includes('_')) {
+      const parts = refId
+        .split(/[_-]/)
+        .map((part) => part.trim())
+        .filter(Boolean);
+      const candidate = parts[parts.length - 1];
+      if (candidate && candidate.length <= 6) {
+        return candidate;
+      }
+    }
+
+    return undefined;
   }
 
   private async fetchImagesSafely(skuId: string): Promise<VtexSkuImage[]> {
@@ -254,23 +489,5 @@ export class CatalogService {
       'response' in error &&
       (error as any).response?.status === 404
     );
-  }
-
-  private extractIdentifiers(response: TiktokProductResponse) {
-    const rawData = response.raw as Record<string, any> | undefined;
-    const productId =
-      response.productId ??
-      rawData?.data?.product_id ??
-      rawData?.data?.product?.product_id ??
-      rawData?.product_id ??
-      null;
-    const skuId =
-      response.skuId ??
-      rawData?.data?.skus?.[0]?.id ??
-      rawData?.data?.sku_id ??
-      rawData?.skus?.[0]?.id ??
-      null;
-
-    return { productId, skuId };
   }
 }

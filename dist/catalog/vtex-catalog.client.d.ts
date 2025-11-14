@@ -6,7 +6,9 @@ export interface VtexSkuSummary {
     id: string;
     productId: string;
     name: string;
+    Name?: string;
     refId?: string;
+    RefId?: string;
     ean?: string;
     isActive?: boolean;
     dimensions?: Record<string, unknown>;
@@ -68,6 +70,7 @@ export declare class VtexCatalogClient {
     private fetchSkuRange;
     getSkuById(skuId: string): Promise<VtexSkuSummary>;
     getProductWithSkus(productId: string): Promise<any>;
+    searchProductWithItems(productId: string): Promise<any>;
     getProductById(productId: string): Promise<VtexProduct>;
     getPrice(skuId: string): Promise<number>;
     setPrice(skuId: string, price: number): Promise<void>;

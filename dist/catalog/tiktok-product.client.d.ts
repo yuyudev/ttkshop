@@ -5,16 +5,21 @@ import { AppConfig } from '../common/config';
 import { TiktokShopService } from '../auth/tiktokshop.service';
 import { VtexProduct, VtexSkuImage, VtexSkuSummary } from './vtex-catalog.client';
 export interface TiktokProductInput {
+    product: VtexProduct;
+    skus: TiktokProductSkuInput[];
+}
+export interface TiktokProductSkuInput {
     vtexSkuId: string;
     sku: VtexSkuSummary;
-    product: VtexProduct;
     price: number;
     quantity: number;
     images: VtexSkuImage[];
+    sizeLabel?: string;
+    ttsSkuId?: string | null;
 }
 export interface TiktokProductResponse {
     productId: string | null;
-    skuId: string | null;
+    skuIds: Record<string, string>;
     raw: any;
 }
 export declare class TiktokProductClient {
@@ -59,7 +64,7 @@ export declare class TiktokProductClient {
     private buildTitle;
     private buildIdentifierCode;
     private buildSkuUnitCount;
-    private buildSalesAttributes;
+    private buildSalesAttributesForSku;
     private buildProductAttributes;
     private buildPackageDimensions;
     private buildPackageWeight;
@@ -68,4 +73,5 @@ export declare class TiktokProductClient {
     private formatPrice;
     private formatNumber;
     private cleanPayload;
+    private extractSizeLabel;
 }

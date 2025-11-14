@@ -9,6 +9,7 @@ export declare class CatalogService {
     private readonly prisma;
     private readonly logger;
     private readonly MAX_SKUS_PER_RUN;
+    private readonly productSkuCache;
     constructor(vtexClient: VtexCatalogClient, tiktokClient: TiktokProductClient, prisma: PrismaService, logger: PinoLogger);
     syncCatalog(shopId: string, input: CatalogSyncDto): Promise<{
         processed: number;
@@ -17,8 +18,13 @@ export declare class CatalogService {
         remaining: number;
         errors: Record<string, string>;
     }>;
-    private syncSingleSku;
+    private syncProductBySku;
+    private extractProductId;
+    private getSkuIdsForProduct;
+    private normalizeProductSkuIds;
+    private extractSkuIdsFromSearchPayload;
+    private selectExistingProductId;
+    private deriveSizeLabel;
     private fetchImagesSafely;
     private isNotFoundError;
-    private extractIdentifiers;
 }

@@ -10,7 +10,9 @@ export interface VtexSkuSummary {
   id: string;
   productId: string;
   name: string;
+  Name?: string;
   refId?: string;
+  RefId?: string;
   ean?: string;
   isActive?: boolean;
   dimensions?: Record<string, unknown>;
@@ -174,6 +176,19 @@ export class VtexCatalogClient {
     const url = `${this.baseUrl()}/catalog/pvt/product/${productId}/skus`;
     const { data } = await firstValueFrom(
       this.http.get(url, { headers: this.defaultHeaders() }),
+    );
+    return data;
+  }
+
+  async searchProductWithItems(productId: string) {
+    const url = `${this.baseUrl()}/catalog_system/pub/products/search/`;
+    const { data } = await firstValueFrom(
+      this.http.get(url, {
+        headers: this.defaultHeaders(),
+        params: {
+          fq: `productId:${productId}`,
+        },
+      }),
     );
     return data;
   }

@@ -101,6 +101,16 @@ let VtexCatalogClient = class VtexCatalogClient {
         const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.defaultHeaders() }));
         return data;
     }
+    async searchProductWithItems(productId) {
+        const url = `${this.baseUrl()}/catalog_system/pub/products/search/`;
+        const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, {
+            headers: this.defaultHeaders(),
+            params: {
+                fq: `productId:${productId}`,
+            },
+        }));
+        return data;
+    }
     async getProductById(productId) {
         const url = `${this.baseUrl()}/catalog/pvt/product/${productId}`;
         const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.defaultHeaders() }));
