@@ -5,6 +5,7 @@ import {
   Headers,
   Post,
   UseGuards,
+  Param,
 } from '@nestjs/common';
 import { ApiHeader, ApiSecurity } from '@nestjs/swagger';
 import { PinoLogger } from 'nestjs-pino';
@@ -23,6 +24,7 @@ import {
   required: true,
   description: 'Chave interna do middleware para autorizar o acesso às rotas',
 })
+
 @UseGuards(ApiKeyAuthGuard)
 @Controller('internal/catalog')
 export class CatalogController {
@@ -62,5 +64,13 @@ export class CatalogController {
     );
 
     return result;
+  }
+
+  @Post('sync/:productId')
+  async syncCatalogByProduct(
+    @Param('productId') productId: string,
+    @Headers('x-tts-shopid') shopId: string,
+  ) {
+    return this.catalogService.syncProduct(shopId, productId);
   }
 }

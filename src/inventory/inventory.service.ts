@@ -48,11 +48,18 @@ export class InventoryService {
         const inventory = sku.StockBalance ?? sku.stockBalance ?? 0;
 
         const mapping = mappings.find((item) => item.vtexSkuId === skuId);
-        if (!mapping?.ttsSkuId) {
+        if (!mapping?.ttsSkuId || !mapping.ttsProductId) {
           continue;
         }
 
-        await this.tiktokClient.updateStock(shopId, warehouseId, mapping.ttsSkuId, inventory);
+        await this.tiktokClient.updateStock(
+          shopId,
+          warehouseId,
+          mapping.ttsSkuId,
+          inventory,
+          mapping.ttsProductId,
+        );
+
 
         results.push({ skuId, inventory, status: 'synced' });
       } catch (error) {

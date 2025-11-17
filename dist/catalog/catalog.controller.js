@@ -41,6 +41,9 @@ let CatalogController = CatalogController_1 = class CatalogController {
         }, 'Finished catalog sync request');
         return result;
     }
+    async syncCatalogByProduct(productId, shopId) {
+        return this.catalogService.syncProduct(shopId, productId);
+    }
 };
 exports.CatalogController = CatalogController;
 __decorate([
@@ -51,6 +54,14 @@ __decorate([
     __metadata("design:paramtypes", [String, Object]),
     __metadata("design:returntype", Promise)
 ], CatalogController.prototype, "syncCatalog", null);
+__decorate([
+    (0, common_1.Post)('sync/:productId'),
+    __param(0, (0, common_1.Param)('productId')),
+    __param(1, (0, common_1.Headers)('x-tts-shopid')),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, String]),
+    __metadata("design:returntype", Promise)
+], CatalogController.prototype, "syncCatalogByProduct", null);
 exports.CatalogController = CatalogController = CatalogController_1 = __decorate([
     (0, swagger_1.ApiSecurity)('middlewareApiKey'),
     (0, swagger_1.ApiHeader)({

@@ -119,30 +119,26 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         }
         return parsed;
     }
-    async updateStock(shopId, warehouseId, skuId, availableQuantity) {
-        return this.legacyRequest(shopId, 'post', '/api/warehouse/stock/update', {
-            warehouse_id: warehouseId,
-            products: [
+    async updateStock(shopId, _warehouseId, ttsSkuId, availableQuantity, ttsProductId) {
+        const accessToken = await this.tiktokShopService.getAccessToken(shopId);
+        const inventoryItem = {
+            warehouse_id: this.warehouseId,
+            quantity: Math.max(0, Math.floor(availableQuantity)),
+        };
+        const body = {
+            skus: [
                 {
-                    sku_id: skuId,
-                    available_stock: availableQuantity,
+                    id: String(ttsSkuId),
+                    inventory: [inventoryItem],
                 },
             ],
-        });
-    }
-    async legacyRequest(shopId, method, path, payload) {
-        const accessToken = await this.tiktokShopService.getAccessToken(shopId);
-        const url = `${this.openBase}${path}`;
-        const headers = this.buildAccessHeaders(accessToken);
-        switch (method) {
-            case 'get':
-                return (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers }));
-            case 'post':
-                return (0, rxjs_1.firstValueFrom)(this.http.post(url, payload, { headers }));
-            case 'put':
-                return (0, rxjs_1.firstValueFrom)(this.http.put(url, payload, { headers }));
-            default:
-                throw new Error(`Unsupported method ${method}`);
+        };
+        const { url, headers, body: signedBody } = this.buildSignedOpenApiRequest(`/product/202309/products/${ttsProductId}/inventory/update`, accessToken, body);
+        const response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, signedBody, { headers }));
+        const code = response.data?.code;
+        if (code !== undefined && code !== 0) {
+            const message = response.data?.message ?? 'Unknown';
+            throw new Error(`TikTok inventory update failed: code=${code} message=${message}`);
         }
     }
     buildSignedOpenApiRequest(path, accessToken, body, options = {}) {
@@ -277,7 +273,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
                 sales_attributes: this.buildSalesAttributesForSku(input.product, skuInput),
                 sku_unit_count: this.buildSkuUnitCount(skuInput.sku),
             };
-            if (skuInput.ttsSkuId) {
+            if (options.productId && skuInput.ttsSkuId) {
                 skuPayload.id = String(skuInput.ttsSkuId);
                 skuPayload.sku_id = String(skuInput.ttsSkuId);
             }
@@ -298,7 +294,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
             package_weight: this.buildPackageWeight(primarySku.sku),
             is_cod_allowed: false,
             is_pre_owned: false,
-            idempotency_key: `vtex-${shopId}-${primarySku.vtexSkuId}`,
+            idempotency_key: `vtex-${shopId}-product-${input.product.Id}`,
             minimum_order_quantity: this.minimumOrderQuantity,
             listing_platforms: this.listingPlatforms,
         };

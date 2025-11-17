@@ -28,11 +28,8 @@ let VtexCatalogClient = class VtexCatalogClient {
         const pageSize = Number(this.configService.get('VTEX_PAGE_SIZE', { infer: true })) || 50;
         const limit = Number(this.configService.get('VTEX_PAGE_LIMIT', { infer: true })) || 20;
         const results = [];
-        let page = 0;
-        while (page < limit) {
-            const from = page * pageSize;
-            const to = from + pageSize - 1;
-            const ids = await this.fetchSkuRange(from, to, updatedFrom);
+        for (let currentPage = 1; currentPage <= limit; currentPage++) {
+            const ids = await this.fetchSkuPage(currentPage, pageSize, updatedFrom);
             if (!ids.length) {
                 break;
             }
@@ -40,17 +37,14 @@ let VtexCatalogClient = class VtexCatalogClient {
             if (ids.length < pageSize) {
                 break;
             }
-            page += 1;
         }
         return results.map((id) => ({ id: String(id), productId: String(id), name: '' }));
     }
-    async fetchSkuRange(from, to, updatedFrom) {
+    async fetchSkuPage(page, pageSize, updatedFrom) {
         const url = `${this.baseUrl()}/catalog_system/pvt/sku/stockkeepingunitids`;
         const params = {
-            from: String(from),
-            to: String(to),
-            page: String(Math.floor(from / Math.max(to - from + 1, 1)) + 1),
-            pageSize: String(to - from + 1),
+            page: String(page),
+            pagesize: String(pageSize),
         };
         if (updatedFrom) {
             params['lastModifiedDate'] = updatedFrom;
@@ -72,7 +66,10 @@ let VtexCatalogClient = class VtexCatalogClient {
                     .map(String);
             }
             if (Array.isArray(body?.data)) {
-                return body.data.map((item) => item?.id ?? item?.skuId).filter(Boolean).map(String);
+                return body.data
+                    .map((item) => item?.id ?? item?.skuId)
+                    .filter(Boolean)
+                    .map(String);
             }
             if (typeof body === 'object' && body !== null) {
                 const candidate = body.skus ?? body.result ?? body.pageItems;
@@ -83,13 +80,18 @@ let VtexCatalogClient = class VtexCatalogClient {
                         .map(String);
                 }
             }
-            this.logger.warn({ from, to, body }, 'VTEX listSkus returned unexpected payload; treating as empty result');
+            this.logger.warn({ page, pageSize, body }, 'VTEX listSkus returned unexpected payload; treating as empty result');
             return [];
         }
         catch (error) {
-            this.logger.error({ err: error, from, to }, 'Failed to list VTEX SKUs');
+            this.logger.error({ err: error, page, pageSize }, 'Failed to list VTEX SKUs');
             throw error;
         }
+    }
+    async getSkuInventory(skuId, warehouseId) {
+        const url = `${this.baseUrl()}/logistics/pvt/inventory/items/${skuId}/warehouses/${warehouseId}`;
+        const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.defaultHeaders() }));
+        return data?.totalQuantity ?? data?.quantity ?? 0;
     }
     async getSkuById(skuId) {
         const url = `${this.baseUrl()}/catalog/pvt/stockkeepingunit/${skuId}`;
@@ -97,7 +99,7 @@ let VtexCatalogClient = class VtexCatalogClient {
         return data;
     }
     async getProductWithSkus(productId) {
-        const url = `${this.baseUrl()}/catalog/pvt/product/${productId}/skus`;
+        const url = `${this.baseUrl()}/catalog_system/pvt/sku/stockkeepingunitByProductId/${productId}`;
         const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.defaultHeaders() }));
         return data;
     }
@@ -129,7 +131,7 @@ let VtexCatalogClient = class VtexCatalogClient {
         }, { headers: this.defaultHeaders() }));
     }
     async updateStock(skuId, warehouseId, quantity) {
-        const url = `${this.baseUrl()}/logistics/pvt/inventory/skus/${skuId}/warehouses/${warehouseId}`;
+        const url = `${this.baseUrl()}/logistics/pvt/inventory/items/${skuId}/warehouses/${warehouseId}`;
         const { data } = await (0, rxjs_1.firstValueFrom)(this.http.put(url, { quantity }, { headers: this.defaultHeaders() }));
         return data;
     }

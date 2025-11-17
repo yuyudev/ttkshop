@@ -51,8 +51,7 @@ export declare class TiktokProductClient {
     constructor(http: HttpService, configService: ConfigService<AppConfig>, tiktokShopService: TiktokShopService, logger: PinoLogger);
     createProduct(shopId: string, input: TiktokProductInput): Promise<TiktokProductResponse>;
     updateProduct(shopId: string, productId: string, input: TiktokProductInput): Promise<TiktokProductResponse>;
-    updateStock(shopId: string, warehouseId: string, skuId: string, availableQuantity: number): Promise<import("axios").AxiosResponse<any, any, {}>>;
-    private legacyRequest;
+    updateStock(shopId: string, _warehouseId: string, ttsSkuId: string, availableQuantity: number, ttsProductId: string): Promise<void>;
     private buildSignedOpenApiRequest;
     private buildAccessHeaders;
     private normalizeBaseUrl;

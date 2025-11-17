@@ -82,42 +82,49 @@ export class VtexCatalogClient {
   }
 
   async listSkus(updatedFrom?: string): Promise<VtexSkuSummary[]> {
+    // quantidade de SKUs por página (padrão 50 se não definido em env)
     const pageSize = Number(this.configService.get('VTEX_PAGE_SIZE', { infer: true })) || 50;
+    // limite de páginas a consultar (padrão 20 se não definido em env)
     const limit = Number(this.configService.get('VTEX_PAGE_LIMIT', { infer: true })) || 20;
 
     const results: string[] = [];
-    let page = 0;
 
-    while (page < limit) {
-      const from = page * pageSize;
-      const to = from + pageSize - 1;
-      const ids = await this.fetchSkuRange(from, to, updatedFrom);
+    // a paginação da VTEX começa em 1
+    for (let currentPage = 1; currentPage <= limit; currentPage++) {
+      const ids = await this.fetchSkuPage(currentPage, pageSize, updatedFrom);
       if (!ids.length) {
-        break;
+        break; // sem resultados, interrompe
       }
       results.push(...ids);
       if (ids.length < pageSize) {
-        break;
+        break; // última página, interrompe
       }
-      page += 1;
     }
 
+    // mapeia cada id para um resumo de SKU (o productId será preenchido depois)
     return results.map((id) => ({ id: String(id), productId: String(id), name: '' }));
   }
 
-  private async fetchSkuRange(
-    from: number,
-    to: number,
+  /**
+   * Consulta uma página de SKUs usando o endpoint catalog_system/pvt/sku/stockkeepingunitids.
+   * @param page número da página (iniciando em 1)
+   * @param pageSize quantidade de registros por página
+   * @param updatedFrom filtra SKUs atualizados após esta data (ISO 8601)
+   */
+  private async fetchSkuPage(
+    page: number,
+    pageSize: number,
     updatedFrom?: string,
   ): Promise<string[]> {
     const url = `${this.baseUrl()}/catalog_system/pvt/sku/stockkeepingunitids`;
+
+    // parâmetros conforme documentação
     const params: Record<string, string> = {
-      from: String(from),
-      to: String(to),
-      page: String(Math.floor(from / Math.max(to - from + 1, 1)) + 1),
-      pageSize: String(to - from + 1),
+      page: String(page),
+      pagesize: String(pageSize),
     };
     if (updatedFrom) {
+      // filtra por data de modificação
       params['lastModifiedDate'] = updatedFrom;
     }
 
@@ -129,8 +136,9 @@ export class VtexCatalogClient {
           maxRedirects: 5,
         }),
       );
-
       const body = response.data;
+
+      // a API pode retornar vários formatos: array simples, wrapper "items", "data", etc.
       if (Array.isArray(body)) {
         return body.map(String);
       }
@@ -141,9 +149,13 @@ export class VtexCatalogClient {
           .map(String);
       }
       if (Array.isArray(body?.data)) {
-        return body.data.map((item: any) => item?.id ?? item?.skuId).filter(Boolean).map(String);
+        return body.data
+          .map((item: any) => item?.id ?? item?.skuId)
+          .filter(Boolean)
+          .map(String);
       }
       if (typeof body === 'object' && body !== null) {
+        // outras possíveis chaves de retorno: skus, result, pageItems
         const candidate = body.skus ?? body.result ?? body.pageItems;
         if (Array.isArray(candidate)) {
           return candidate
@@ -153,15 +165,26 @@ export class VtexCatalogClient {
         }
       }
 
+      // se não reconhecer o formato, registra um aviso e retorna vazio
       this.logger.warn(
-        { from, to, body },
+        { page, pageSize, body },
         'VTEX listSkus returned unexpected payload; treating as empty result',
       );
       return [];
     } catch (error) {
-      this.logger.error({ err: error, from, to }, 'Failed to list VTEX SKUs');
+      this.logger.error({ err: error, page, pageSize }, 'Failed to list VTEX SKUs');
       throw error;
     }
+  }
+
+  async getSkuInventory(skuId: string, warehouseId: string): Promise<number> {
+    const url = `${this.baseUrl()}/logistics/pvt/inventory/items/${skuId}/warehouses/${warehouseId}`;
+
+    const { data } = await firstValueFrom(
+      this.http.get(url, { headers: this.defaultHeaders() }),
+    );
+
+    return data?.totalQuantity ?? data?.quantity ?? 0;
   }
 
   async getSkuById(skuId: string): Promise<VtexSkuSummary> {
@@ -173,7 +196,8 @@ export class VtexCatalogClient {
   }
 
   async getProductWithSkus(productId: string) {
-    const url = `${this.baseUrl()}/catalog/pvt/product/${productId}/skus`;
+    // endpoint correto segundo a documentação
+    const url = `${this.baseUrl()}/catalog_system/pvt/sku/stockkeepingunitByProductId/${productId}`;
     const { data } = await firstValueFrom(
       this.http.get(url, { headers: this.defaultHeaders() }),
     );
@@ -228,15 +252,11 @@ export class VtexCatalogClient {
     warehouseId: string,
     quantity: number,
   ): Promise<{ quantity: number }> {
-    const url = `${this.baseUrl()}/logistics/pvt/inventory/skus/${skuId}/warehouses/${warehouseId}`;
+    // a rota correta usa 'items', não 'skus'
+    const url = `${this.baseUrl()}/logistics/pvt/inventory/items/${skuId}/warehouses/${warehouseId}`;
     const { data } = await firstValueFrom(
-      this.http.put<{ quantity: number }>(
-        url,
-        { quantity },
-        { headers: this.defaultHeaders() },
-      ),
+      this.http.put(url, { quantity }, { headers: this.defaultHeaders() }),
     );
-
     return data;
   }
 
@@ -287,4 +307,6 @@ export class VtexCatalogClient {
       'Content-Type': 'application/json',
     };
   }
+
+  
 }

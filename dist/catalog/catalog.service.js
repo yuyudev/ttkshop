@@ -14,54 +14,59 @@ exports.CatalogService = void 0;
 const common_1 = require("@nestjs/common");
 const axios_1 = require("axios");
 const nestjs_pino_1 = require("nestjs-pino");
+const config_1 = require("@nestjs/config");
 const prisma_service_1 = require("../prisma/prisma.service");
 const vtex_catalog_client_1 = require("./vtex-catalog.client");
 const tiktok_product_client_1 = require("./tiktok-product.client");
 let CatalogService = CatalogService_1 = class CatalogService {
-    constructor(vtexClient, tiktokClient, prisma, logger) {
+    constructor(vtexClient, tiktokClient, prisma, logger, configService) {
         this.vtexClient = vtexClient;
         this.tiktokClient = tiktokClient;
         this.prisma = prisma;
         this.logger = logger;
+        this.configService = configService;
         this.MAX_SKUS_PER_RUN = 50;
         this.productSkuCache = new Map();
         this.logger.setContext(CatalogService_1.name);
     }
     async syncCatalog(shopId, input) {
         const skuSummaries = await this.vtexClient.listSkus(input.updatedFrom);
+        const processedSkuIds = new Set();
+        const productGroups = new Map();
+        let groupedSkuCount = 0;
+        for (const { id } of skuSummaries) {
+            if (groupedSkuCount >= this.MAX_SKUS_PER_RUN) {
+                break;
+            }
+            const skuId = String(id);
+            if (!skuId)
+                continue;
+            const sku = await this.vtexClient.getSkuById(skuId);
+            const productId = this.extractProductId(sku);
+            if (!productId)
+                continue;
+            if (!productGroups.has(productId)) {
+                productGroups.set(productId, []);
+            }
+            productGroups.get(productId).push(skuId);
+            groupedSkuCount += 1;
+        }
         let processed = 0;
         let synced = 0;
         const errors = {};
-        const processedSkuIds = new Set();
-        for (const summary of skuSummaries) {
-            const skuId = String(summary.id);
-            if (!skuId || processedSkuIds.has(skuId)) {
-                continue;
-            }
-            if (processed >= this.MAX_SKUS_PER_RUN) {
+        for (const [, skuIds] of productGroups) {
+            if (processed >= this.MAX_SKUS_PER_RUN)
                 break;
-            }
             const remainingBudget = this.MAX_SKUS_PER_RUN - processed;
-            const result = await this.syncProductBySku(shopId, skuId, processedSkuIds, remainingBudget, processed === 0);
-            if (result.budgetExceeded) {
-                this.logger.debug({ shopId, skuId, remainingBudget }, 'Catalog sync budget reached; stopping current run');
+            const result = await this.syncProductBySku(shopId, skuIds[0], processedSkuIds, remainingBudget, processed === 0);
+            if (result.budgetExceeded)
                 break;
-            }
             processed += result.processedSkus;
             synced += result.syncedSkus;
             Object.assign(errors, result.errors);
-            if (processed >= this.MAX_SKUS_PER_RUN) {
-                break;
-            }
         }
         const remaining = Math.max(skuSummaries.length - processedSkuIds.size, 0);
-        return {
-            processed,
-            synced,
-            failed: processed - synced,
-            remaining,
-            errors,
-        };
+        return { processed, synced, failed: processed - synced, remaining, errors };
     }
     async syncProductBySku(shopId, vtexSkuId, processedSkuIds, remainingBudget, allowBudgetOverflow) {
         const errors = {};
@@ -86,15 +91,53 @@ let CatalogService = CatalogService_1 = class CatalogService {
                 };
             }
             const mappings = await this.prisma.productMap.findMany({
-                where: { vtexSkuId: { in: relatedSkuIds } },
+                where: {
+                    shopId,
+                    vtexSkuId: { in: relatedSkuIds },
+                },
             });
-            const mappingBySkuId = new Map(mappings.map((mapping) => [mapping.vtexSkuId, mapping]));
+            const distinctProductIds = Array.from(new Set(mappings
+                .map((m) => m.ttsProductId)
+                .filter((value) => Boolean(value))));
+            let existingProductId = null;
+            let effectiveMappings = mappings;
+            if (distinctProductIds.length === 1) {
+                existingProductId = distinctProductIds[0];
+                effectiveMappings = mappings.filter((m) => m.ttsProductId === existingProductId);
+            }
+            else if (distinctProductIds.length > 1) {
+                this.logger.warn({
+                    vtexProductId: product.Id,
+                    relatedSkuIds,
+                    ttsProductIds: distinctProductIds,
+                }, 'Multiple TikTok product IDs found for VTEX product; resetting mappings and recreating product on TikTok');
+                await this.prisma.productMap.updateMany({
+                    where: {
+                        shopId,
+                        vtexSkuId: { in: relatedSkuIds },
+                    },
+                    data: {
+                        status: 'pending',
+                        lastError: null,
+                        ttsProductId: null,
+                        ttsSkuId: null,
+                    },
+                });
+                existingProductId = null;
+                effectiveMappings = [];
+            }
+            else {
+                existingProductId = null;
+                effectiveMappings = [];
+            }
+            const mappingBySkuId = new Map(effectiveMappings.map((mapping) => [mapping.vtexSkuId, mapping]));
             const skuInputs = [];
             for (const skuId of relatedSkuIds) {
                 const skuDetails = skuId === vtexSkuId ? sku : await this.vtexClient.getSkuById(skuId);
                 const price = await this.vtexClient.getPrice(skuId);
                 const images = await this.fetchImagesSafely(skuId);
-                const quantity = skuDetails.StockBalance ?? skuDetails.stockBalance ?? 0;
+                const warehouseId = this.configService.get('VTEX_WAREHOUSE_ID', { infer: true }) ?? '1_1';
+                const quantity = await this.vtexClient.getSkuInventory(skuId, warehouseId);
                 const mapping = mappingBySkuId.get(skuId);
                 skuInputs.push({
                     vtexSkuId: skuId,
@@ -106,11 +149,33 @@ let CatalogService = CatalogService_1 = class CatalogService {
                     ttsSkuId: mapping?.ttsSkuId ?? null,
                 });
             }
+            const seenSizes = new Set();
+            for (const skuInput of skuInputs) {
+                if (!skuInput.sizeLabel)
+                    continue;
+                const normalized = skuInput.sizeLabel.toString().trim().toUpperCase();
+                if (!normalized) {
+                    skuInput.sizeLabel = undefined;
+                    continue;
+                }
+                if (seenSizes.has(normalized)) {
+                    this.logger.warn({
+                        productId,
+                        vtexSkuId: skuInput.vtexSkuId,
+                        sizeLabelOriginal: skuInput.sizeLabel,
+                        sizeLabelNormalized: normalized,
+                    }, 'Duplicate size label for product; clearing sales attribute to avoid TikTok error 12052251');
+                    skuInput.sizeLabel = undefined;
+                }
+                else {
+                    skuInput.sizeLabel = normalized;
+                    seenSizes.add(normalized);
+                }
+            }
             const productInput = {
                 product,
                 skus: skuInputs,
             };
-            const existingProductId = this.selectExistingProductId(mappings);
             const response = existingProductId
                 ? await this.tiktokClient.updateProduct(shopId, existingProductId, productInput)
                 : await this.tiktokClient.createProduct(shopId, productInput);
@@ -192,6 +257,11 @@ let CatalogService = CatalogService_1 = class CatalogService {
                 errors,
             };
         }
+    }
+    async syncProduct(shopId, productId) {
+        const skuIds = await this.getSkuIdsForProduct(productId, productId);
+        const result = await this.syncProductBySku(shopId, skuIds[0], new Set(), this.MAX_SKUS_PER_RUN, true);
+        return result;
     }
     extractProductId(sku) {
         const productId = sku?.ProductId ??
@@ -309,43 +379,28 @@ let CatalogService = CatalogService_1 = class CatalogService {
         }
         return Array.from(new Set(skuIds));
     }
-    selectExistingProductId(mappings) {
-        const productIds = Array.from(new Set(mappings
-            .map((mapping) => mapping.ttsProductId)
-            .filter((value) => Boolean(value))));
-        if (productIds.length > 1) {
-            this.logger.warn({ productIds }, 'Multiple TikTok product IDs found for VTEX product; using the first one');
-        }
-        return productIds[0] ?? null;
-    }
     deriveSizeLabel(product, sku) {
-        const productName = product.Name?.toString().trim().toLowerCase() ?? '';
-        const rawSkuName = sku.Name ??
-            sku.name ??
-            sku?.NameComplete ??
-            '';
-        const skuName = rawSkuName ? rawSkuName.toString().trim() : '';
-        if (productName && skuName.toLowerCase().startsWith(productName)) {
-            const suffix = skuName.slice(productName.length).trim();
-            if (suffix) {
-                return suffix;
-            }
+        const productName = (product.Name ?? '').toString().trim().toLowerCase();
+        const rawSkuName = (sku.Name ?? sku.name ?? sku.NameComplete ?? '')
+            .toString().trim();
+        let suffix = '';
+        if (productName && rawSkuName.toLowerCase().startsWith(productName)) {
+            suffix = rawSkuName.slice(productName.length).trim();
         }
-        if (skuName.includes(' ')) {
-            const candidate = skuName.split(/\s+/).pop();
-            if (candidate) {
-                return candidate.trim();
-            }
+        else {
+            const parts = rawSkuName.split(/\s+/);
+            suffix = parts[parts.length - 1] ?? '';
         }
-        const refId = sku?.RefId ?? sku?.refId;
-        if (typeof refId === 'string' && refId.includes('_')) {
-            const parts = refId
-                .split(/[_-]/)
-                .map((part) => part.trim())
-                .filter(Boolean);
-            const candidate = parts[parts.length - 1];
-            if (candidate && candidate.length <= 6) {
-                return candidate;
+        const match = suffix.match(/^(pp|p|m|g|gg|\d{1,3})$/i);
+        if (match) {
+            return match[1].toUpperCase();
+        }
+        const refId = sku.RefId ?? sku.refId;
+        if (typeof refId === 'string') {
+            const refParts = refId.split(/[_-]/).map((p) => p.trim()).filter(Boolean);
+            const last = refParts[refParts.length - 1];
+            if (last && /^[0-9]{1,3}$/i.test(last)) {
+                return last;
             }
         }
         return undefined;
@@ -375,6 +430,7 @@ exports.CatalogService = CatalogService = CatalogService_1 = __decorate([
     __metadata("design:paramtypes", [vtex_catalog_client_1.VtexCatalogClient,
         tiktok_product_client_1.TiktokProductClient,
         prisma_service_1.PrismaService,
-        nestjs_pino_1.PinoLogger])
+        nestjs_pino_1.PinoLogger,
+        config_1.ConfigService])
 ], CatalogService);
 //# sourceMappingURL=catalog.service.js.map

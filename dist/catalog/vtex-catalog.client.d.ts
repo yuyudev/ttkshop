@@ -67,7 +67,8 @@ export declare class VtexCatalogClient {
     private readonly domainOverride?;
     constructor(http: HttpService, configService: ConfigService<AppConfig>, logger: PinoLogger);
     listSkus(updatedFrom?: string): Promise<VtexSkuSummary[]>;
-    private fetchSkuRange;
+    private fetchSkuPage;
+    getSkuInventory(skuId: string, warehouseId: string): Promise<number>;
     getSkuById(skuId: string): Promise<VtexSkuSummary>;
     getProductWithSkus(productId: string): Promise<any>;
     searchProductWithItems(productId: string): Promise<any>;

@@ -12,4 +12,10 @@ export declare class CatalogController {
         remaining: number;
         errors: Record<string, string>;
     }>;
+    syncCatalogByProduct(productId: string, shopId: string): Promise<{
+        processedSkus: number;
+        syncedSkus: number;
+        errors: Record<string, string>;
+        budgetExceeded?: boolean;
+    }>;
 }

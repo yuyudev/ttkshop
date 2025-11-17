@@ -1,6 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { isAxiosError } from 'axios';
 import { PinoLogger } from 'nestjs-pino';
+import { ConfigService } from '@nestjs/config';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { CatalogSyncDto } from '../common/dto';
@@ -27,6 +28,7 @@ export class CatalogService {
     private readonly tiktokClient: TiktokProductClient,
     private readonly prisma: PrismaService,
     private readonly logger: PinoLogger,
+    private readonly configService: ConfigService, 
   ) {
     this.logger.setContext(CatalogService.name);
   }
@@ -40,58 +42,60 @@ export class CatalogService {
    */
   async syncCatalog(shopId: string, input: CatalogSyncDto) {
     const skuSummaries = await this.vtexClient.listSkus(input.updatedFrom);
+    const processedSkuIds = new Set<string>();
+    const productGroups = new Map<string, string[]>();
+
+    /**
+     * Agrupar SKUs por productId, mas respeitando um limite
+     * de quantos SKUs vamos considerar nesse run.
+     *
+     * Isso evita chamar getSkuById para TODOS os SKUs da VTEX
+     * em uma única requisição HTTP.
+     */
+    let groupedSkuCount = 0;
+
+    for (const { id } of skuSummaries) {
+      if (groupedSkuCount >= this.MAX_SKUS_PER_RUN) {
+        break;
+      }
+
+      const skuId = String(id);
+      if (!skuId) continue;
+
+      const sku = await this.vtexClient.getSkuById(skuId);
+      const productId = this.extractProductId(sku);
+      if (!productId) continue;
+
+      if (!productGroups.has(productId)) {
+        productGroups.set(productId, []);
+      }
+      productGroups.get(productId)!.push(skuId);
+
+      groupedSkuCount += 1;
+    }
 
     let processed = 0;
     let synced = 0;
     const errors: Record<string, string> = {};
-    const processedSkuIds = new Set<string>();
 
-    for (const summary of skuSummaries) {
-      const skuId = String(summary.id);
-      if (!skuId || processedSkuIds.has(skuId)) {
-        continue;
-      }
-
-      if (processed >= this.MAX_SKUS_PER_RUN) {
-        break;
-      }
-
+    for (const [, skuIds] of productGroups) {
+      if (processed >= this.MAX_SKUS_PER_RUN) break;
       const remainingBudget = this.MAX_SKUS_PER_RUN - processed;
       const result = await this.syncProductBySku(
         shopId,
-        skuId,
+        skuIds[0],
         processedSkuIds,
         remainingBudget,
         processed === 0,
       );
-
-      if (result.budgetExceeded) {
-        this.logger.debug(
-          { shopId, skuId, remainingBudget },
-          'Catalog sync budget reached; stopping current run',
-        );
-        break;
-      }
-
+      if (result.budgetExceeded) break;
       processed += result.processedSkus;
       synced += result.syncedSkus;
-
       Object.assign(errors, result.errors);
-
-      if (processed >= this.MAX_SKUS_PER_RUN) {
-        break;
-      }
     }
 
     const remaining = Math.max(skuSummaries.length - processedSkuIds.size, 0);
-
-    return {
-      processed,
-      synced,
-      failed: processed - synced,
-      remaining,
-      errors,
-    };
+    return { processed, synced, failed: processed - synced, remaining, errors };
   }
 
   private async syncProductBySku(
@@ -133,19 +137,94 @@ export class CatalogService {
         };
       }
 
+      /**
+       * 1) Buscar mappings existentes (VTEX SKU -> TikTok product/sku)
+       *    Já filtrando por shopId para evitar sujeira de outras lojas.
+       */
       const mappings = await this.prisma.productMap.findMany({
-        where: { vtexSkuId: { in: relatedSkuIds } },
+        where: {
+          shopId,
+          vtexSkuId: { in: relatedSkuIds },
+        },
       });
-      const mappingBySkuId = new Map(mappings.map((mapping) => [mapping.vtexSkuId, mapping]));
+
+      /**
+       * 2) Descobrir quais productIds do TikTok existem para esse conjunto de SKUs.
+       *    Se tiver mais de um, isso está inconsistente: vamos resetar tudo
+       *    e tratar como produto novo no TikTok.
+       */
+      const distinctProductIds: string[] = Array.from(
+        new Set(
+          mappings
+            .map((m) => m.ttsProductId)
+            .filter((value): value is string => Boolean(value)),
+        ),
+      );
+
+      let existingProductId: string | null = null;
+      let effectiveMappings = mappings;
+
+      if (distinctProductIds.length === 1) {
+        existingProductId = distinctProductIds[0];
+
+        // por segurança, filtra apenas mappings que apontam para esse productId
+        effectiveMappings = mappings.filter(
+          (m) => m.ttsProductId === existingProductId,
+        );
+      } else if (distinctProductIds.length > 1) {
+        // cenário quebrado: vários TikTok productIds para o mesmo VTEX product
+        this.logger.warn(
+          {
+            vtexProductId: product.Id,
+            relatedSkuIds,
+            ttsProductIds: distinctProductIds,
+          },
+          'Multiple TikTok product IDs found for VTEX product; resetting mappings and recreating product on TikTok',
+        );
+
+        await this.prisma.productMap.updateMany({
+          where: {
+            shopId,
+            vtexSkuId: { in: relatedSkuIds },
+          },
+          data: {
+            status: 'pending',
+            lastError: null,
+            ttsProductId: null,
+            ttsSkuId: null,
+          },
+        });
+
+        existingProductId = null;
+        effectiveMappings = [];
+      } else {
+        // nenhum productId ainda: vamos criar um produto novo no TikTok
+        existingProductId = null;
+        effectiveMappings = [];
+      }
+
+      /**
+       * 3) Construir mapa por vtexSkuId, usando apenas mappings "saudáveis"
+       *    (ou seja, que apontam para o mesmo ttsProductId, se houver).
+       */
+      const mappingBySkuId = new Map(
+        effectiveMappings.map((mapping) => [mapping.vtexSkuId, mapping]),
+      );
 
       const skuInputs: TiktokProductSkuInput[] = [];
 
       for (const skuId of relatedSkuIds) {
         const skuDetails =
           skuId === vtexSkuId ? sku : await this.vtexClient.getSkuById(skuId);
+
         const price = await this.vtexClient.getPrice(skuId);
         const images = await this.fetchImagesSafely(skuId);
-        const quantity = skuDetails.StockBalance ?? skuDetails.stockBalance ?? 0;
+
+        const warehouseId =
+          this.configService.get<string>('VTEX_WAREHOUSE_ID', { infer: true }) ?? '1_1';
+
+        const quantity = await this.vtexClient.getSkuInventory(skuId, warehouseId);
+
         const mapping = mappingBySkuId.get(skuId);
 
         skuInputs.push({
@@ -159,18 +238,56 @@ export class CatalogService {
         });
       }
 
+      // Normalizar e deduplicar labels de tamanho por produto
+      const seenSizes = new Set<string>();
+
+      for (const skuInput of skuInputs) {
+        if (!skuInput.sizeLabel) continue;
+
+        // normaliza: trim + upper
+        const normalized = skuInput.sizeLabel.toString().trim().toUpperCase();
+
+        if (!normalized) {
+          skuInput.sizeLabel = undefined;
+          continue;
+        }
+
+        if (seenSizes.has(normalized)) {
+          // Já temos um SKU com esse tamanho para este produto.
+          // Para evitar o erro 12052251, removemos o atributo de venda desta duplicata.
+          this.logger.warn(
+            {
+              productId,
+              vtexSkuId: skuInput.vtexSkuId,
+              sizeLabelOriginal: skuInput.sizeLabel,
+              sizeLabelNormalized: normalized,
+            },
+            'Duplicate size label for product; clearing sales attribute to avoid TikTok error 12052251',
+          );
+
+          skuInput.sizeLabel = undefined;
+        } else {
+          skuInput.sizeLabel = normalized;
+          seenSizes.add(normalized);
+        }
+      }
+
       const productInput: TiktokProductInput = {
         product,
         skus: skuInputs,
       };
 
-      const existingProductId = this.selectExistingProductId(mappings);
-
+      /**
+       * 4) Decidir entre criar ou atualizar produto no TikTok.
+       *    Se existingProductId for null, criamos um novo produto;
+       *    caso contrário, atualizamos o produto existente.
+       */
       const response = existingProductId
         ? await this.tiktokClient.updateProduct(shopId, existingProductId, productInput)
         : await this.tiktokClient.createProduct(shopId, productInput);
 
-      const targetProductId = response.productId ?? existingProductId ?? null;
+      const targetProductId =
+        response.productId ?? existingProductId ?? null;
 
       let syncedSkus = 0;
 
@@ -267,6 +384,18 @@ export class CatalogService {
         errors,
       };
     }
+  }
+
+  async syncProduct(shopId: string, productId: string) {
+    const skuIds = await this.getSkuIdsForProduct(productId, productId);
+    const result = await this.syncProductBySku(
+      shopId,
+      skuIds[0],
+      new Set<string>(),
+      this.MAX_SKUS_PER_RUN,
+      true,
+    );
+    return result;
   }
 
   private extractProductId(sku: VtexSkuSummary): string | null {
@@ -408,62 +537,36 @@ export class CatalogService {
     return Array.from(new Set(skuIds));
   }
 
-  private selectExistingProductId(
-    mappings: Array<{ ttsProductId: string | null }>,
-  ): string | null {
-    const productIds = Array.from(
-      new Set(
-        mappings
-          .map((mapping) => mapping.ttsProductId)
-          .filter((value): value is string => Boolean(value)),
-      ),
-    );
-
-    if (productIds.length > 1) {
-      this.logger.warn(
-        { productIds },
-        'Multiple TikTok product IDs found for VTEX product; using the first one',
-      );
-    }
-
-    return productIds[0] ?? null;
-  }
-
   private deriveSizeLabel(product: VtexProduct, sku: VtexSkuSummary): string | undefined {
-    const productName = product.Name?.toString().trim().toLowerCase() ?? '';
-    const rawSkuName =
-      sku.Name ??
-      sku.name ??
-      (sku as any)?.NameComplete ??
-      '';
-    const skuName = rawSkuName ? rawSkuName.toString().trim() : '';
+    const productName = (product.Name ?? '').toString().trim().toLowerCase();
+    const rawSkuName = (sku.Name ?? sku.name ?? (sku as any).NameComplete ?? '')
+      .toString().trim();
 
-    if (productName && skuName.toLowerCase().startsWith(productName)) {
-      const suffix = skuName.slice(productName.length).trim();
-      if (suffix) {
-        return suffix;
-      }
+    let suffix = '';
+    // remover o nome do produto do início, se existir
+    if (productName && rawSkuName.toLowerCase().startsWith(productName)) {
+      suffix = rawSkuName.slice(productName.length).trim();
+    } else {
+      // caso contrário, usar a última palavra
+      const parts = rawSkuName.split(/\s+/);
+      suffix = parts[parts.length - 1] ?? '';
     }
 
-    if (skuName.includes(' ')) {
-      const candidate = skuName.split(/\s+/).pop();
-      if (candidate) {
-        return candidate.trim();
-      }
+    // aceitar apenas números (1 a 3 dígitos) ou siglas PP/P/M/G/GG
+    const match = suffix.match(/^(pp|p|m|g|gg|\d{1,3})$/i);
+    if (match) {
+      return match[1].toUpperCase();
     }
 
-    const refId = (sku as any)?.RefId ?? (sku as any)?.refId;
-    if (typeof refId === 'string' && refId.includes('_')) {
-      const parts = refId
-        .split(/[_-]/)
-        .map((part) => part.trim())
-        .filter(Boolean);
-      const candidate = parts[parts.length - 1];
-      if (candidate && candidate.length <= 6) {
-        return candidate;
+    // fallback: último segmento numérico do refId
+    const refId = (sku as any).RefId ?? (sku as any).refId;
+    if (typeof refId === 'string') {
+      const refParts = refId.split(/[_-]/).map((p) => p.trim()).filter(Boolean);
+      const last = refParts[refParts.length - 1];
+      if (last && /^[0-9]{1,3}$/i.test(last)) {
+        return last;
       }
     }
-
     return undefined;
   }
 
