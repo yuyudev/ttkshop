@@ -4,7 +4,7 @@ export declare class OrdersController {
     private readonly ordersService;
     constructor(ordersService: OrdersService);
     handleWebhook(payload: OrderWebhookDto): Promise<{
-        status: "skipped" | "processed";
+        status: "processed" | "skipped";
     }>;
     getLabel(orderId: string): Promise<{
         orderId: string;

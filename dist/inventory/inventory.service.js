@@ -34,14 +34,16 @@ let InventoryService = InventoryService_1 = class InventoryService {
         }
     }
     async syncInventory(shopId, payload) {
-        const mappings = await this.prisma.productMap.findMany({
+        const mappings = (await this.prisma.productMap.findMany({
             where: {
                 status: 'synced',
                 ttsSkuId: { not: null },
                 shopId,
             },
-        });
-        const skuIds = payload.skuIds?.length ? payload.skuIds : mappings.map((item) => item.vtexSkuId);
+        }));
+        const skuIds = payload.skuIds?.length
+            ? payload.skuIds
+            : mappings.map((item) => item.vtexSkuId);
         const warehouseId = payload.warehouseId ?? 'DEFAULT';
         const results = [];
         for (const skuId of skuIds) {

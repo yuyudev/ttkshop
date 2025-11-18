@@ -15,6 +15,8 @@ import { CatalogController } from './catalog/catalog.controller';
 import { CatalogService } from './catalog/catalog.service';
 import { TiktokProductClient } from './catalog/tiktok-product.client';
 import { VtexCatalogClient } from './catalog/vtex-catalog.client';
+import { CategoryMappingService } from './catalog/category-mapping.service';
+import { CategoryAiService } from './catalog/category-ai.service';
 import { ApiKeyAuthGuard } from './auth/auth.guard';
 import { TiktokShopService } from './auth/tiktokshop.service';
 import { TokenCryptoService } from './common/token-crypto.service';
@@ -82,6 +84,8 @@ import { generateRequestId } from './common/utils';
     TokenCryptoService,
     TiktokShopService,
     CatalogService,
+    CategoryMappingService,
+    CategoryAiService,
     TiktokProductClient,
     VtexCatalogClient,
     InventoryService,

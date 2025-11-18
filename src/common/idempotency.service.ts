@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { createPayloadHash } from './utils';
@@ -23,7 +24,7 @@ export class IdempotencyService {
   ): Promise<'skipped' | 'processed'> {
     const payloadHash = createPayloadHash(payload);
 
-    return this.prisma.$transaction(async (tx) => {
+    return this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
       const existing = await tx.idempotency.findUnique({
         where: { key },
       });

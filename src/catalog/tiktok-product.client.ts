@@ -24,12 +24,20 @@ export interface TiktokProductSkuInput {
   images: VtexSkuImage[];
   sizeLabel?: string;
   ttsSkuId?: string | null;
+  sellerSkuOverride?: string;
 }
 
 export interface TiktokProductResponse {
   productId: string | null;
   skuIds: Record<string, string>;
   raw: any;
+}
+
+interface ProductPayloadOptions {
+  productId?: string;
+  idempotencyKeySuffix?: string;
+  externalSkuIdSuffix?: string;
+  categoryId?: string;
 }
 
 @Injectable()
@@ -107,9 +115,10 @@ export class TiktokProductClient {
   async createProduct(
     shopId: string,
     input: TiktokProductInput,
+    options: ProductPayloadOptions = {},
   ): Promise<TiktokProductResponse> {
     const accessToken = await this.tiktokShopService.getAccessToken(shopId);
-    const payload = await this.buildProductPayload(shopId, accessToken, input);
+    const payload = await this.buildProductPayload(shopId, accessToken, input, options);
 
     this.logger.info(
       {
@@ -133,9 +142,7 @@ export class TiktokProductClient {
     const message = response.data?.message;
 
     if (code !== undefined && code !== 0) {
-      throw new Error(
-        `TikTok createProduct failed: code=${code} message=${message ?? 'Unknown'}`,
-      );
+      throw this.buildTikTokError('createProduct', code, message, response.data);
     }
 
     if (!parsed.productId || !Object.keys(parsed.skuIds).length) {
@@ -161,9 +168,13 @@ export class TiktokProductClient {
     shopId: string,
     productId: string,
     input: TiktokProductInput,
+    options: ProductPayloadOptions = {},
   ): Promise<TiktokProductResponse> {
     const accessToken = await this.tiktokShopService.getAccessToken(shopId);
-    const payload = await this.buildProductPayload(shopId, accessToken, input, { productId });
+    const payload = await this.buildProductPayload(shopId, accessToken, input, {
+      ...options,
+      productId,
+    });
 
     this.logger.info(
       {
@@ -188,9 +199,7 @@ export class TiktokProductClient {
     const message = response.data?.message;
 
     if (code !== undefined && code !== 0) {
-      throw new Error(
-        `TikTok updateProduct failed: code=${code} message=${message ?? 'Unknown'}`,
-      );
+      throw this.buildTikTokError('updateProduct', code, message, response.data);
     }
 
     if (!parsed.productId || !Object.keys(parsed.skuIds).length) {
@@ -380,12 +389,70 @@ export class TiktokProductClient {
     };
   }
 
+  private buildTikTokError(
+    action: string,
+    code?: number,
+    message?: string,
+    raw?: any,
+  ): Error {
+    const normalizedCode = code ?? -1;
+    const normalizedMessage = message ?? 'Unknown';
+    const error = new Error(
+      `TikTok ${action} failed: code=${normalizedCode} message=${normalizedMessage}`,
+    );
+    (error as any).code = normalizedCode;
+    if (raw !== undefined) {
+      (error as any).raw = raw;
+    }
+    return error;
+  }
+
+
+  private buildSellerSku(skuInput: TiktokProductSkuInput): string {
+    const override =
+      typeof skuInput.sellerSkuOverride === 'string'
+        ? skuInput.sellerSkuOverride.trim()
+        : '';
+    const fallback = String(skuInput.vtexSkuId);
+    if (override) {
+      return override;
+    }
+    return fallback;
+  }
+
+  private buildExternalSkuId(
+    skuInput: TiktokProductSkuInput,
+    suffix?: string,
+  ): string | undefined {
+    const baseRaw =
+      (skuInput.sku as any).RefId ??
+      skuInput.sku.refId ??
+      skuInput.vtexSkuId ??
+      null;
+    if (baseRaw === null || baseRaw === undefined) {
+      return undefined;
+    }
+    const base = String(baseRaw).trim();
+    if (!base) {
+      return undefined;
+    }
+    return suffix ? `${base}-${suffix}` : base;
+  }
+
+  private buildIdempotencyKey(
+    shopId: string,
+    productId: number | string,
+    suffix?: string,
+  ): string {
+    const base = `vtex-${shopId}-product-${productId}`;
+    return suffix ? `${base}-${suffix}` : base;
+  }
 
   private async buildProductPayload(
     shopId: string,
     accessToken: string,
     input: TiktokProductInput,
-    options: { productId?: string } = {},
+    options: ProductPayloadOptions = {},
   ) {
     if (!input.skus.length) {
       throw new Error('Cannot build TikTok product payload without SKUs');
@@ -400,6 +467,7 @@ export class TiktokProductClient {
       primarySku.sku.BrandName ??
       'Generic';
     const categoryId =
+      options.categoryId ??
       this.categoryId ??
       (input.product.CategoryId ? String(input.product.CategoryId) : undefined);
 
@@ -409,6 +477,11 @@ export class TiktokProductClient {
 
     const mainImageUris = new Map<string, { uri: string }>();
     const skuPayloads: Array<Record<string, unknown>> = [];
+
+    // controla valores de atributo de venda já usados (ex: "Size:38")
+    const usedSaleAttributeValues = new Set<string>();
+    // controla quantas vezes já usamos um mesmo valor base ("Size:38")
+    const saleAttributeCounters = new Map<string, number>();
 
     for (const skuInput of input.skus) {
       const priceAmount = this.formatPrice(skuInput.price);
@@ -438,11 +511,49 @@ export class TiktokProductClient {
       const skuImgUri = preparedImages[0]?.uri;
       const supplementarySkuImages = preparedImages.slice(1);
 
+      // monta atributos de venda (Size) e garante unicidade de value_name
+      let salesAttributes = this.buildSalesAttributesForSku(
+        input.product,
+        skuInput,
+      );
+
+      if (salesAttributes && salesAttributes.length > 0) {
+        for (const attr of salesAttributes as any[]) {
+          let name = String(attr.name ?? '').trim();
+          let value = String(attr.value_name ?? '').trim();
+
+          // se vier algo inválido, zera atributos pra não quebrar o payload
+          if (!name || !value) {
+            salesAttributes = [];
+            break;
+          }
+
+          const baseKey = `${name}:${value}`;
+          if (usedSaleAttributeValues.has(baseKey)) {
+            // já temos esse valor de atributo; gera um sufixo para torná-lo único
+            const currentCount = saleAttributeCounters.get(baseKey) ?? 1;
+            const nextCount = currentCount + 1;
+            saleAttributeCounters.set(baseKey, nextCount);
+
+            value = `${value}-${nextCount}`;
+          } else {
+            // primeira vez que usamos esse valor base
+            saleAttributeCounters.set(baseKey, 1);
+          }
+
+          const finalKey = `${name}:${value}`;
+          usedSaleAttributeValues.add(finalKey);
+
+          attr.name = name;
+          attr.value_name = value;
+        }
+      }
+
+      const externalSkuId = this.buildExternalSkuId(skuInput, options.externalSkuIdSuffix);
+
+      const sellerSku = this.buildSellerSku(skuInput);
       const skuPayload: Record<string, unknown> = {
-        seller_sku: String(skuInput.vtexSkuId),
-        external_sku_id: String(
-          (skuInput.sku as any).RefId ?? skuInput.sku.refId ?? skuInput.vtexSkuId,
-        ),
+        seller_sku: sellerSku,
         price: {
           amount: priceAmount,
           currency: this.currency,
@@ -455,16 +566,19 @@ export class TiktokProductClient {
           supplementarySkuImages.length > 0
             ? supplementarySkuImages.map((image) => ({ uri: image.uri }))
             : undefined,
-        sales_attributes: this.buildSalesAttributesForSku(input.product, skuInput),
+        sales_attributes: salesAttributes,
         sku_unit_count: this.buildSkuUnitCount(skuInput.sku),
       };
+
+      if (externalSkuId) {
+        skuPayload.external_sku_id = externalSkuId;
+      }
 
       if (options.productId && skuInput.ttsSkuId) {
         // só envia id/sku_id quando estamos atualizando um product_id já existente
         skuPayload.id = String(skuInput.ttsSkuId);
         skuPayload.sku_id = String(skuInput.ttsSkuId);
       }
-
 
       skuPayloads.push(this.cleanPayload(skuPayload));
     }
@@ -485,7 +599,11 @@ export class TiktokProductClient {
       package_weight: this.buildPackageWeight(primarySku.sku),
       is_cod_allowed: false,
       is_pre_owned: false,
-      idempotency_key: `vtex-${shopId}-product-${input.product.Id}`,
+      idempotency_key: this.buildIdempotencyKey(
+        shopId,
+        input.product.Id,
+        options.idempotencyKeySuffix,
+      ),
       minimum_order_quantity: this.minimumOrderQuantity,
       listing_platforms: this.listingPlatforms,
     };
@@ -494,7 +612,6 @@ export class TiktokProductClient {
       delete payload.brand_id;
     }
     if (!brandName) {
-      
       delete payload.brand_name;
     }
     if (!this.minimumOrderQuantity) {
@@ -515,25 +632,27 @@ export class TiktokProductClient {
     accessToken: string,
     images: VtexSkuImage[],
   ): Promise<Array<{ uri: string }>> {
-    if (!images.length) {
+    if (!images.length) return [];
+
+    const uris: string[] = [];
+    for (const image of [...images].sort((a, b) => a.position - b.position)) {
+      // tenta baixar a imagem com e sem query string
+      const downloadUrls = [image.url, image.url.split('?')[0]];
+      let uploadedUri: string | null = null;
+      for (const url of downloadUrls) {
+        uploadedUri = await this.ensureImageUri(shopId, accessToken, url);
+        if (uploadedUri) break;
+      }
+      if (uploadedUri) uris.push(uploadedUri);
+    }
+    if (uris.length === 0) {
+      this.logger.warn({ images }, 'Nenhuma imagem foi carregada; usando placeholder');
+      // Carrega uma imagem padrão ou retorna array vazio
       return [];
     }
-    const sorted = [...images].sort((a, b) => a.position - b.position);
-    const uris: string[] = [];
-
-    for (const image of sorted) {
-      const uri = await this.ensureImageUri(shopId, accessToken, image.url);
-      if (uri) {
-        uris.push(uri);
-      }
-    }
-
-    if (uris.length === 0) {
-      throw new Error('Unable to upload any product images to TikTok');
-    }
-
     return uris.map((uri) => ({ uri }));
   }
+
 
   private async ensureImageUri(
     _shopId: string,
@@ -640,13 +759,43 @@ export class TiktokProductClient {
     product: VtexProduct,
     primarySku: TiktokProductSkuInput,
   ): string {
-    return (
-      product.Title ??
-      product.Name ??
+    // candidatos de título em ordem de preferência
+    const candidates: string[] = [];
+    if (product.Name) candidates.push(product.Name.toString());
+    if (product.Title) candidates.push(product.Title.toString());
+    const skuName =
+      (primarySku.sku as any).Name ??
       primarySku.sku.name ??
-      primarySku.sku.Name ??
-      `SKU ${primarySku.vtexSkuId}`
-    );
+      (primarySku.sku as any)?.NameComplete;
+    if (skuName) candidates.push(skuName.toString());
+
+    // seleciona o primeiro candidato não vazio
+    let title =
+      candidates.find((c) => c && c.trim().length > 0)?.trim() ??
+      `SKU ${primarySku.vtexSkuId}`;
+
+    // garante mínimo de 25 caracteres adicionando a marca
+    // se existir e não estiver já no título
+    const brand =
+      product.BrandName ??
+      primarySku.sku.BrandName ??
+      (primarySku.sku as any)?.brandName;
+    if (title.length < 25 && brand) {
+      if (!title.toLowerCase().includes(brand.toLowerCase())) {
+        title = `${brand} - ${title}`;
+      }
+    }
+    // se ainda estiver curto, adiciona um sufixo genérico
+    if (title.length < 25) {
+      title = `${title} - produto original`;
+    }
+
+    // limita a 255 caracteres, conforme doc
+    if (title.length > 255) {
+      title = title.substring(0, 255);
+    }
+
+    return title;
   }
 
   private buildIdentifierCode(sku: VtexSkuSummary) {
@@ -671,7 +820,13 @@ export class TiktokProductClient {
     product: VtexProduct,
     skuInput: TiktokProductSkuInput,
   ) {
-    const sizeLabel = this.extractSizeLabel(product, skuInput) ?? skuInput.sizeLabel;
+    const rawSizeLabel =
+      this.extractSizeLabel(product, skuInput) ?? skuInput.sizeLabel;
+
+    const sizeLabel = rawSizeLabel
+      ? rawSizeLabel.toString().trim()
+      : undefined;
+
     if (!sizeLabel) {
       return [];
     }

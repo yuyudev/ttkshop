@@ -59,9 +59,9 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         this.listingPlatforms = Array.isArray(listingPlatforms) ? listingPlatforms : undefined;
         this.logger.setContext(TiktokProductClient_1.name);
     }
-    async createProduct(shopId, input) {
+    async createProduct(shopId, input, options = {}) {
         const accessToken = await this.tiktokShopService.getAccessToken(shopId);
-        const payload = await this.buildProductPayload(shopId, accessToken, input);
+        const payload = await this.buildProductPayload(shopId, accessToken, input, options);
         this.logger.info({
             shopId,
             vtexProductId: input.product.Id,
@@ -73,7 +73,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         const code = response.data?.code;
         const message = response.data?.message;
         if (code !== undefined && code !== 0) {
-            throw new Error(`TikTok createProduct failed: code=${code} message=${message ?? 'Unknown'}`);
+            throw this.buildTikTokError('createProduct', code, message, response.data);
         }
         if (!parsed.productId || !Object.keys(parsed.skuIds).length) {
             throw new Error(`TikTok createProduct did not return product_id/sku_id for vtexProductId=${input.product.Id}`);
@@ -85,9 +85,12 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         }, 'Successfully created TikTok product');
         return parsed;
     }
-    async updateProduct(shopId, productId, input) {
+    async updateProduct(shopId, productId, input, options = {}) {
         const accessToken = await this.tiktokShopService.getAccessToken(shopId);
-        const payload = await this.buildProductPayload(shopId, accessToken, input, { productId });
+        const payload = await this.buildProductPayload(shopId, accessToken, input, {
+            ...options,
+            productId,
+        });
         this.logger.info({
             shopId,
             productId,
@@ -100,7 +103,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         const code = response.data?.code;
         const message = response.data?.message;
         if (code !== undefined && code !== 0) {
-            throw new Error(`TikTok updateProduct failed: code=${code} message=${message ?? 'Unknown'}`);
+            throw this.buildTikTokError('updateProduct', code, message, response.data);
         }
         if (!parsed.productId || !Object.keys(parsed.skuIds).length) {
             this.logger.warn({
@@ -221,6 +224,44 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
             raw: data,
         };
     }
+    buildTikTokError(action, code, message, raw) {
+        const normalizedCode = code ?? -1;
+        const normalizedMessage = message ?? 'Unknown';
+        const error = new Error(`TikTok ${action} failed: code=${normalizedCode} message=${normalizedMessage}`);
+        error.code = normalizedCode;
+        if (raw !== undefined) {
+            error.raw = raw;
+        }
+        return error;
+    }
+    buildSellerSku(skuInput) {
+        const override = typeof skuInput.sellerSkuOverride === 'string'
+            ? skuInput.sellerSkuOverride.trim()
+            : '';
+        const fallback = String(skuInput.vtexSkuId);
+        if (override) {
+            return override;
+        }
+        return fallback;
+    }
+    buildExternalSkuId(skuInput, suffix) {
+        const baseRaw = skuInput.sku.RefId ??
+            skuInput.sku.refId ??
+            skuInput.vtexSkuId ??
+            null;
+        if (baseRaw === null || baseRaw === undefined) {
+            return undefined;
+        }
+        const base = String(baseRaw).trim();
+        if (!base) {
+            return undefined;
+        }
+        return suffix ? `${base}-${suffix}` : base;
+    }
+    buildIdempotencyKey(shopId, productId, suffix) {
+        const base = `vtex-${shopId}-product-${productId}`;
+        return suffix ? `${base}-${suffix}` : base;
+    }
     async buildProductPayload(shopId, accessToken, input, options = {}) {
         if (!input.skus.length) {
             throw new Error('Cannot build TikTok product payload without SKUs');
@@ -231,13 +272,16 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
             input.product.BrandName ??
             primarySku.sku.BrandName ??
             'Generic';
-        const categoryId = this.categoryId ??
+        const categoryId = options.categoryId ??
+            this.categoryId ??
             (input.product.CategoryId ? String(input.product.CategoryId) : undefined);
         if (!categoryId) {
             throw new Error('Unable to determine TikTok category_id for product');
         }
         const mainImageUris = new Map();
         const skuPayloads = [];
+        const usedSaleAttributeValues = new Set();
+        const saleAttributeCounters = new Map();
         for (const skuInput of input.skus) {
             const priceAmount = this.formatPrice(skuInput.price);
             const quantity = Math.max(0, Number.isFinite(skuInput.quantity) ? skuInput.quantity : 0);
@@ -256,9 +300,35 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
             }
             const skuImgUri = preparedImages[0]?.uri;
             const supplementarySkuImages = preparedImages.slice(1);
+            let salesAttributes = this.buildSalesAttributesForSku(input.product, skuInput);
+            if (salesAttributes && salesAttributes.length > 0) {
+                for (const attr of salesAttributes) {
+                    let name = String(attr.name ?? '').trim();
+                    let value = String(attr.value_name ?? '').trim();
+                    if (!name || !value) {
+                        salesAttributes = [];
+                        break;
+                    }
+                    const baseKey = `${name}:${value}`;
+                    if (usedSaleAttributeValues.has(baseKey)) {
+                        const currentCount = saleAttributeCounters.get(baseKey) ?? 1;
+                        const nextCount = currentCount + 1;
+                        saleAttributeCounters.set(baseKey, nextCount);
+                        value = `${value}-${nextCount}`;
+                    }
+                    else {
+                        saleAttributeCounters.set(baseKey, 1);
+                    }
+                    const finalKey = `${name}:${value}`;
+                    usedSaleAttributeValues.add(finalKey);
+                    attr.name = name;
+                    attr.value_name = value;
+                }
+            }
+            const externalSkuId = this.buildExternalSkuId(skuInput, options.externalSkuIdSuffix);
+            const sellerSku = this.buildSellerSku(skuInput);
             const skuPayload = {
-                seller_sku: String(skuInput.vtexSkuId),
-                external_sku_id: String(skuInput.sku.RefId ?? skuInput.sku.refId ?? skuInput.vtexSkuId),
+                seller_sku: sellerSku,
                 price: {
                     amount: priceAmount,
                     currency: this.currency,
@@ -270,9 +340,12 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
                 supplementary_sku_images: supplementarySkuImages.length > 0
                     ? supplementarySkuImages.map((image) => ({ uri: image.uri }))
                     : undefined,
-                sales_attributes: this.buildSalesAttributesForSku(input.product, skuInput),
+                sales_attributes: salesAttributes,
                 sku_unit_count: this.buildSkuUnitCount(skuInput.sku),
             };
+            if (externalSkuId) {
+                skuPayload.external_sku_id = externalSkuId;
+            }
             if (options.productId && skuInput.ttsSkuId) {
                 skuPayload.id = String(skuInput.ttsSkuId);
                 skuPayload.sku_id = String(skuInput.ttsSkuId);
@@ -294,7 +367,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
             package_weight: this.buildPackageWeight(primarySku.sku),
             is_cod_allowed: false,
             is_pre_owned: false,
-            idempotency_key: `vtex-${shopId}-product-${input.product.Id}`,
+            idempotency_key: this.buildIdempotencyKey(shopId, input.product.Id, options.idempotencyKeySuffix),
             minimum_order_quantity: this.minimumOrderQuantity,
             listing_platforms: this.listingPlatforms,
         };
@@ -316,19 +389,23 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         return this.cleanPayload(payload);
     }
     async prepareImages(shopId, accessToken, images) {
-        if (!images.length) {
+        if (!images.length)
             return [];
-        }
-        const sorted = [...images].sort((a, b) => a.position - b.position);
         const uris = [];
-        for (const image of sorted) {
-            const uri = await this.ensureImageUri(shopId, accessToken, image.url);
-            if (uri) {
-                uris.push(uri);
+        for (const image of [...images].sort((a, b) => a.position - b.position)) {
+            const downloadUrls = [image.url, image.url.split('?')[0]];
+            let uploadedUri = null;
+            for (const url of downloadUrls) {
+                uploadedUri = await this.ensureImageUri(shopId, accessToken, url);
+                if (uploadedUri)
+                    break;
             }
+            if (uploadedUri)
+                uris.push(uploadedUri);
         }
         if (uris.length === 0) {
-            throw new Error('Unable to upload any product images to TikTok');
+            this.logger.warn({ images }, 'Nenhuma imagem foi carregada; usando placeholder');
+            return [];
         }
         return uris.map((uri) => ({ uri }));
     }
@@ -388,11 +465,33 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         return description.toString().trim() || this.fallbackDescription;
     }
     buildTitle(product, primarySku) {
-        return (product.Title ??
-            product.Name ??
+        const candidates = [];
+        if (product.Name)
+            candidates.push(product.Name.toString());
+        if (product.Title)
+            candidates.push(product.Title.toString());
+        const skuName = primarySku.sku.Name ??
             primarySku.sku.name ??
-            primarySku.sku.Name ??
-            `SKU ${primarySku.vtexSkuId}`);
+            primarySku.sku?.NameComplete;
+        if (skuName)
+            candidates.push(skuName.toString());
+        let title = candidates.find((c) => c && c.trim().length > 0)?.trim() ??
+            `SKU ${primarySku.vtexSkuId}`;
+        const brand = product.BrandName ??
+            primarySku.sku.BrandName ??
+            primarySku.sku?.brandName;
+        if (title.length < 25 && brand) {
+            if (!title.toLowerCase().includes(brand.toLowerCase())) {
+                title = `${brand} - ${title}`;
+            }
+        }
+        if (title.length < 25) {
+            title = `${title} - produto original`;
+        }
+        if (title.length > 255) {
+            title = title.substring(0, 255);
+        }
+        return title;
     }
     buildIdentifierCode(sku) {
         const ean = (sku.EAN ?? sku.Ean ?? sku?.ean ?? '').toString().trim();
@@ -411,7 +510,10 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         return Number(sku.UnitMultiplier).toString();
     }
     buildSalesAttributesForSku(product, skuInput) {
-        const sizeLabel = this.extractSizeLabel(product, skuInput) ?? skuInput.sizeLabel;
+        const rawSizeLabel = this.extractSizeLabel(product, skuInput) ?? skuInput.sizeLabel;
+        const sizeLabel = rawSizeLabel
+            ? rawSizeLabel.toString().trim()
+            : undefined;
         if (!sizeLabel) {
             return [];
         }

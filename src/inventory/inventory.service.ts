@@ -7,6 +7,12 @@ import { PrismaService } from '../prisma/prisma.service';
 import { VtexCatalogClient } from '../catalog/vtex-catalog.client';
 import { TiktokProductClient } from '../catalog/tiktok-product.client';
 
+type ProductMapRecord = {
+  vtexSkuId: string;
+  ttsSkuId: string | null;
+  ttsProductId: string | null;
+};
+
 @Injectable()
 export class InventoryService {
   constructor(
@@ -30,15 +36,17 @@ export class InventoryService {
   }
 
   async syncInventory(shopId: string, payload: InventorySyncDto) {
-    const mappings = await this.prisma.productMap.findMany({
+    const mappings = (await this.prisma.productMap.findMany({
       where: {
         status: 'synced',
         ttsSkuId: { not: null },
         shopId,
       },
-    });
+    })) as ProductMapRecord[];
 
-    const skuIds = payload.skuIds?.length ? payload.skuIds : mappings.map((item) => item.vtexSkuId);
+    const skuIds = payload.skuIds?.length
+      ? payload.skuIds
+      : mappings.map((item: ProductMapRecord) => item.vtexSkuId);
     const warehouseId = payload.warehouseId ?? 'DEFAULT';
 
     const results = [];
@@ -47,7 +55,7 @@ export class InventoryService {
         const sku = await this.vtexClient.getSkuById(skuId);
         const inventory = sku.StockBalance ?? sku.stockBalance ?? 0;
 
-        const mapping = mappings.find((item) => item.vtexSkuId === skuId);
+        const mapping = mappings.find((item: ProductMapRecord) => item.vtexSkuId === skuId);
         if (!mapping?.ttsSkuId || !mapping.ttsProductId) {
           continue;
         }

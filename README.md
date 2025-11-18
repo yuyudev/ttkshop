@@ -67,6 +67,11 @@ SWAGGER_PASSWORD=strongpass
 TOKEN_ENCRYPTION_KEY=chave_com_32_bytes_no_minimo_123456
 REQUEST_TIMEOUT_MS=10000
 HTTP_MAX_RETRIES=3
+
+OPENAI_API_KEY=sk-xxx
+# opcional
+OPENAI_MODEL=gpt-5.1
+OPENAI_BASE_URL=https://api.openai.com/v1
 ```
 
 > `TOKEN_ENCRYPTION_KEY` é usada para criptografar refresh tokens TikTok via AES-256-GCM.
@@ -138,6 +143,15 @@ npm run test:e2e # cenários e2e (supertest)
 - Cheque `Idempotency` para eventos repetidos/ignorados.
 - Refaça `ProductMap` em caso de divergência de SKU entre plataformas.
 - Ajuste `REQUEST_TIMEOUT_MS` e `HTTP_MAX_RETRIES` para cenários com APIs lentas.
+
+### Categorias TikTok Shop
+1. Execute as migrações (`npx prisma migrate deploy`) para criar as tabelas `TiktokCategory` e `VtexCategoryMap` e o novo campo `ttsCategoryId` em `ProductMap`.
+2. Importe o catálogo oficial do TikTok Shop para o banco:
+   ```bash
+   npm run tiktok:import-categories -- --file=./data/tiktok_categories.json --version=v2025-01-01
+   ```
+3. Preencha a tabela `VtexCategoryMap` com os relacionamentos VTEX → TikTok que desejar priorizar. Itens sem mapeamento usam `TIKTOK_DEFAULT_CATEGORY_ID` como fallback.
+4. O endpoint `POST /internal/catalog/sync/:productId` aplica a categoria mapeada automaticamente ao criar produtos novos.
 
 ### Próximos passos sugeridos
 - Configurar monitoramento Prometheus/Grafana.

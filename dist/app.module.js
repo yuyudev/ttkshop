@@ -23,6 +23,8 @@ const catalog_controller_1 = require("./catalog/catalog.controller");
 const catalog_service_1 = require("./catalog/catalog.service");
 const tiktok_product_client_1 = require("./catalog/tiktok-product.client");
 const vtex_catalog_client_1 = require("./catalog/vtex-catalog.client");
+const category_mapping_service_1 = require("./catalog/category-mapping.service");
+const category_ai_service_1 = require("./catalog/category-ai.service");
 const auth_guard_1 = require("./auth/auth.guard");
 const tiktokshop_service_1 = require("./auth/tiktokshop.service");
 const token_crypto_service_1 = require("./common/token-crypto.service");
@@ -95,6 +97,8 @@ exports.AppModule = AppModule = __decorate([
             token_crypto_service_1.TokenCryptoService,
             tiktokshop_service_1.TiktokShopService,
             catalog_service_1.CatalogService,
+            category_mapping_service_1.CategoryMappingService,
+            category_ai_service_1.CategoryAiService,
             tiktok_product_client_1.TiktokProductClient,
             vtex_catalog_client_1.VtexCatalogClient,
             inventory_service_1.InventoryService,

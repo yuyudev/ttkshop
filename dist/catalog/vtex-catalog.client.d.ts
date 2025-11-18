@@ -79,6 +79,8 @@ export declare class VtexCatalogClient {
         quantity: number;
     }>;
     getSkuImages(skuId: string): Promise<VtexSkuImage[]>;
+    private buildVtexImageUrl;
+    private normalizeFileLocation;
     private baseUrl;
     private defaultHeaders;
 }

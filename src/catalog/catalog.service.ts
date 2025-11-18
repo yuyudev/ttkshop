@@ -14,8 +14,17 @@ import {
 import {
   TiktokProductClient,
   TiktokProductInput,
+  TiktokProductResponse,
   TiktokProductSkuInput,
 } from './tiktok-product.client';
+import { CategoryMappingService } from './category-mapping.service';
+
+type ProductMapRecord = {
+  vtexSkuId: string;
+  ttsProductId: string | null;
+  ttsSkuId: string | null;
+  ttsCategoryId?: string | null;
+};
 
 @Injectable()
 export class CatalogService {
@@ -28,7 +37,8 @@ export class CatalogService {
     private readonly tiktokClient: TiktokProductClient,
     private readonly prisma: PrismaService,
     private readonly logger: PinoLogger,
-    private readonly configService: ConfigService, 
+    private readonly configService: ConfigService,
+    private readonly categoryMappingService: CategoryMappingService,
   ) {
     this.logger.setContext(CatalogService.name);
   }
@@ -141,12 +151,12 @@ export class CatalogService {
        * 1) Buscar mappings existentes (VTEX SKU -> TikTok product/sku)
        *    Já filtrando por shopId para evitar sujeira de outras lojas.
        */
-      const mappings = await this.prisma.productMap.findMany({
+      const mappings = (await this.prisma.productMap.findMany({
         where: {
           shopId,
           vtexSkuId: { in: relatedSkuIds },
         },
-      });
+      })) as ProductMapRecord[];
 
       /**
        * 2) Descobrir quais productIds do TikTok existem para esse conjunto de SKUs.
@@ -156,20 +166,20 @@ export class CatalogService {
       const distinctProductIds: string[] = Array.from(
         new Set(
           mappings
-            .map((m) => m.ttsProductId)
+            .map((mapping: ProductMapRecord) => mapping.ttsProductId)
             .filter((value): value is string => Boolean(value)),
         ),
       );
 
       let existingProductId: string | null = null;
-      let effectiveMappings = mappings;
+      let effectiveMappings: ProductMapRecord[] = mappings;
 
       if (distinctProductIds.length === 1) {
         existingProductId = distinctProductIds[0];
 
         // por segurança, filtra apenas mappings que apontam para esse productId
         effectiveMappings = mappings.filter(
-          (m) => m.ttsProductId === existingProductId,
+          (mapping: ProductMapRecord) => mapping.ttsProductId === existingProductId,
         );
       } else if (distinctProductIds.length > 1) {
         // cenário quebrado: vários TikTok productIds para o mesmo VTEX product
@@ -192,7 +202,8 @@ export class CatalogService {
             lastError: null,
             ttsProductId: null,
             ttsSkuId: null,
-          },
+            ttsCategoryId: null,
+          } as any,
         });
 
         existingProductId = null;
@@ -207,11 +218,15 @@ export class CatalogService {
        * 3) Construir mapa por vtexSkuId, usando apenas mappings "saudáveis"
        *    (ou seja, que apontam para o mesmo ttsProductId, se houver).
        */
-      const mappingBySkuId = new Map(
-        effectiveMappings.map((mapping) => [mapping.vtexSkuId, mapping]),
+      const mappingBySkuId = new Map<string, ProductMapRecord>(
+        effectiveMappings.map(
+          (mapping) => [mapping.vtexSkuId, mapping] as [string, ProductMapRecord],
+        ),
       );
 
       const skuInputs: TiktokProductSkuInput[] = [];
+      const vtexWarehouseId =
+        this.configService.get<string>('VTEX_WAREHOUSE_ID', { infer: true }) ?? '1_1';
 
       for (const skuId of relatedSkuIds) {
         const skuDetails =
@@ -219,11 +234,7 @@ export class CatalogService {
 
         const price = await this.vtexClient.getPrice(skuId);
         const images = await this.fetchImagesSafely(skuId);
-
-        const warehouseId =
-          this.configService.get<string>('VTEX_WAREHOUSE_ID', { infer: true }) ?? '1_1';
-
-        const quantity = await this.vtexClient.getSkuInventory(skuId, warehouseId);
+        const quantity = await this.vtexClient.getSkuInventory(skuId, vtexWarehouseId);
 
         const mapping = mappingBySkuId.get(skuId);
 
@@ -272,19 +283,112 @@ export class CatalogService {
         }
       }
 
+      const categoryFromMappings =
+        effectiveMappings.find((mapping) => mapping.ttsCategoryId)?.ttsCategoryId ?? null;
+      let resolvedCategoryId = categoryFromMappings;
+      let categorySource = categoryFromMappings ? 'mapping' : 'fallback';
+
+      if (!resolvedCategoryId) {
+        const categoryResolution = await this.categoryMappingService.resolveCategory(product);
+        resolvedCategoryId = categoryResolution.categoryId;
+        categorySource = categoryResolution.source;
+      }
+
+      if (!resolvedCategoryId) {
+        throw new Error(`Unable to determine TikTok category for product ${productId}`);
+      }
+
       const productInput: TiktokProductInput = {
         product,
         skus: skuInputs,
       };
+
+      this.logger.debug(
+        {
+          productId,
+          vtexCategoryId: product.CategoryId,
+          resolvedCategoryId,
+          categorySource,
+        },
+        'Resolved TikTok category for product sync',
+      );
 
       /**
        * 4) Decidir entre criar ou atualizar produto no TikTok.
        *    Se existingProductId for null, criamos um novo produto;
        *    caso contrário, atualizamos o produto existente.
        */
-      const response = existingProductId
-        ? await this.tiktokClient.updateProduct(shopId, existingProductId, productInput)
-        : await this.tiktokClient.createProduct(shopId, productInput);
+      const baseCreateOptions = {
+        categoryId: resolvedCategoryId ?? undefined,
+      };
+
+      let response: TiktokProductResponse;
+
+      try {
+        response = existingProductId
+          ? await this.tiktokClient.updateProduct(
+              shopId,
+              existingProductId,
+              productInput,
+              baseCreateOptions,
+            )
+          : await this.tiktokClient.createProduct(shopId, productInput, baseCreateOptions);
+      } catch (error) {
+        if (existingProductId && this.isTikTokProductStatusInvalid(error)) {
+          this.logger.warn(
+            {
+              shopId,
+              productId,
+              existingProductId,
+              relatedSkuIds,
+              err: error instanceof Error ? error.message : error,
+            },
+            'TikTok rejected update due to product status; recreating product',
+          );
+
+          await this.prisma.productMap.updateMany({
+            where: {
+              shopId,
+              vtexSkuId: { in: relatedSkuIds },
+            },
+            data: {
+              status: 'pending',
+              lastError: null,
+              ttsProductId: null,
+              ttsSkuId: null,
+              ttsCategoryId: null,
+            } as any,
+          });
+
+          existingProductId = null;
+          const recreateSuffix = this.generateRecreateSuffix(productId);
+          this.applySellerSkuOverride(skuInputs, recreateSuffix);
+          response = await this.tiktokClient.createProduct(shopId, productInput, {
+            ...baseCreateOptions,
+            idempotencyKeySuffix: recreateSuffix,
+            externalSkuIdSuffix: recreateSuffix,
+          });
+        } else if (this.isTikTokExternalIdDuplicate(error)) {
+          const duplicateSuffix = this.generateRecreateSuffix(productId);
+          this.logger.warn(
+            {
+              shopId,
+              productId,
+              relatedSkuIds,
+              err: error instanceof Error ? error.message : error,
+            },
+            'TikTok reported duplicate external_id; regenerating sellerSkus and retrying',
+          );
+          this.applySellerSkuOverride(skuInputs, duplicateSuffix);
+          response = await this.tiktokClient.createProduct(shopId, productInput, {
+            ...baseCreateOptions,
+            idempotencyKeySuffix: duplicateSuffix,
+            externalSkuIdSuffix: duplicateSuffix,
+          });
+        } else {
+          throw error;
+        }
+      }
 
       const targetProductId =
         response.productId ?? existingProductId ?? null;
@@ -292,8 +396,10 @@ export class CatalogService {
       let syncedSkus = 0;
 
       for (const skuInput of skuInputs) {
+        const sellerSkuKey =
+          (skuInput.sellerSkuOverride ?? skuInput.vtexSkuId).toString();
         const mappedSkuId =
-          response.skuIds[String(skuInput.vtexSkuId)] ??
+          response.skuIds[sellerSkuKey] ??
           skuInput.ttsSkuId ??
           null;
 
@@ -305,14 +411,16 @@ export class CatalogService {
             shopId,
             ttsProductId: targetProductId,
             ttsSkuId: mappedSkuId,
-          },
+            ttsCategoryId: resolvedCategoryId,
+          } as any,
           create: {
             vtexSkuId: skuInput.vtexSkuId,
             shopId,
             status: 'synced',
             ttsProductId: targetProductId,
             ttsSkuId: mappedSkuId,
-          },
+            ttsCategoryId: resolvedCategoryId,
+          } as any,
         });
 
         processedSkuIds.add(skuInput.vtexSkuId);
@@ -328,6 +436,17 @@ export class CatalogService {
             ? 'Successfully synced SKU to TikTok (update)'
             : 'Successfully synced SKU to TikTok (create)',
         );
+
+        if (targetProductId && mappedSkuId) {
+          await this.syncInventoryForSku(
+            shopId,
+            skuInput.vtexSkuId,
+            mappedSkuId,
+            targetProductId,
+            skuInput.quantity,
+            vtexWarehouseId,
+          );
+        }
       }
 
       return {
@@ -387,7 +506,10 @@ export class CatalogService {
   }
 
   async syncProduct(shopId: string, productId: string) {
-    const skuIds = await this.getSkuIdsForProduct(productId, productId);
+    const skuIds = await this.getSkuIdsForProduct(productId);
+    if (!skuIds.length) {
+      throw new Error(`No VTEX SKUs found for product ${productId}`);
+    }
     const result = await this.syncProductBySku(
       shopId,
       skuIds[0],
@@ -407,10 +529,13 @@ export class CatalogService {
     return productId ? String(productId) : null;
   }
 
-  private async getSkuIdsForProduct(productId: string, fallbackSkuId: string): Promise<string[]> {
+  private async getSkuIdsForProduct(
+    productId: string,
+    fallbackSkuId?: string,
+  ): Promise<string[]> {
     const cached = this.productSkuCache.get(productId);
     if (cached && cached.length) {
-      if (!cached.includes(fallbackSkuId)) {
+      if (fallbackSkuId && !cached.includes(fallbackSkuId)) {
         const updated = Array.from(new Set([...cached, fallbackSkuId].map(String)));
         this.productSkuCache.set(productId, updated);
         return updated;
@@ -455,7 +580,7 @@ export class CatalogService {
       }
     }
 
-    if (!relatedSkuIds.includes(fallbackSkuId)) {
+    if (fallbackSkuId && !relatedSkuIds.includes(fallbackSkuId)) {
       relatedSkuIds.push(fallbackSkuId);
     }
 
@@ -585,6 +710,41 @@ export class CatalogService {
     }
   }
 
+  private async syncInventoryForSku(
+    shopId: string,
+    vtexSkuId: string,
+    ttsSkuId: string,
+    ttsProductId: string,
+    quantity: number,
+    warehouseId: string,
+  ): Promise<void> {
+    try {
+      await this.tiktokClient.updateStock(
+        shopId,
+        warehouseId,
+        ttsSkuId,
+        Number.isFinite(quantity) ? quantity : 0,
+        ttsProductId,
+      );
+      this.logger.info(
+        { shopId, vtexSkuId, ttsSkuId, ttsProductId, quantity },
+        'Synced inventory to TikTok after catalog sync',
+      );
+    } catch (error) {
+      this.logger.error(
+        {
+          shopId,
+          vtexSkuId,
+          ttsSkuId,
+          ttsProductId,
+          quantity,
+          err: error,
+        },
+        'Failed to sync inventory to TikTok after catalog sync',
+      );
+    }
+  }
+
   private isNotFoundError(error: unknown): boolean {
     return (
       typeof error === 'object' &&
@@ -592,5 +752,39 @@ export class CatalogService {
       'response' in error &&
       (error as any).response?.status === 404
     );
+  }
+
+  private isTikTokProductStatusInvalid(error: unknown): boolean {
+    if (typeof error === 'object' && error !== null && 'code' in error) {
+      return Number((error as any).code) === 12052901;
+    }
+    if (error instanceof Error && error.message) {
+      return error.message.includes('12052901');
+    }
+    return false;
+  }
+
+  private isTikTokExternalIdDuplicate(error: unknown): boolean {
+    if (typeof error === 'object' && error !== null && 'code' in error) {
+      return Number((error as any).code) === 12052996;
+    }
+    if (error instanceof Error && error.message) {
+      return error.message.includes('12052996');
+    }
+    return false;
+  }
+
+  private generateRecreateSuffix(productId: string | number): string {
+    const random = Math.random().toString(36).slice(2, 8);
+    return `recreate-${productId}-${Date.now()}-${random}`;
+  }
+
+  private applySellerSkuOverride(
+    skuInputs: TiktokProductSkuInput[],
+    suffix: string,
+  ) {
+    for (const skuInput of skuInputs) {
+      skuInput.sellerSkuOverride = `${skuInput.vtexSkuId}-${suffix}`;
+    }
   }
 }

@@ -16,11 +16,18 @@ export interface TiktokProductSkuInput {
     images: VtexSkuImage[];
     sizeLabel?: string;
     ttsSkuId?: string | null;
+    sellerSkuOverride?: string;
 }
 export interface TiktokProductResponse {
     productId: string | null;
     skuIds: Record<string, string>;
     raw: any;
+}
+interface ProductPayloadOptions {
+    productId?: string;
+    idempotencyKeySuffix?: string;
+    externalSkuIdSuffix?: string;
+    categoryId?: string;
 }
 export declare class TiktokProductClient {
     private readonly http;
@@ -49,13 +56,17 @@ export declare class TiktokProductClient {
     private readonly listingPlatforms?;
     private readonly imageUriCache;
     constructor(http: HttpService, configService: ConfigService<AppConfig>, tiktokShopService: TiktokShopService, logger: PinoLogger);
-    createProduct(shopId: string, input: TiktokProductInput): Promise<TiktokProductResponse>;
-    updateProduct(shopId: string, productId: string, input: TiktokProductInput): Promise<TiktokProductResponse>;
+    createProduct(shopId: string, input: TiktokProductInput, options?: ProductPayloadOptions): Promise<TiktokProductResponse>;
+    updateProduct(shopId: string, productId: string, input: TiktokProductInput, options?: ProductPayloadOptions): Promise<TiktokProductResponse>;
     updateStock(shopId: string, _warehouseId: string, ttsSkuId: string, availableQuantity: number, ttsProductId: string): Promise<void>;
     private buildSignedOpenApiRequest;
     private buildAccessHeaders;
     private normalizeBaseUrl;
     private parseProductResponse;
+    private buildTikTokError;
+    private buildSellerSku;
+    private buildExternalSkuId;
+    private buildIdempotencyKey;
     private buildProductPayload;
     private prepareImages;
     private ensureImageUri;
@@ -74,3 +85,4 @@ export declare class TiktokProductClient {
     private cleanPayload;
     private extractSizeLabel;
 }
+export {};

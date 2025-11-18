@@ -91,7 +91,37 @@ let VtexCatalogClient = class VtexCatalogClient {
     async getSkuInventory(skuId, warehouseId) {
         const url = `${this.baseUrl()}/logistics/pvt/inventory/items/${skuId}/warehouses/${warehouseId}`;
         const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.defaultHeaders() }));
-        return data?.totalQuantity ?? data?.quantity ?? 0;
+        const parseQuantity = (value) => {
+            if (value === null || value === undefined) {
+                return 0;
+            }
+            const parsed = Number(value);
+            return Number.isFinite(parsed) ? parsed : 0;
+        };
+        const extractQuantity = (payload) => {
+            if (!payload || typeof payload !== 'object') {
+                return 0;
+            }
+            const candidates = [
+                payload.totalQuantity,
+                payload.quantity,
+                payload.availableQuantity,
+            ];
+            for (const value of candidates) {
+                if (value !== undefined && value !== null) {
+                    return parseQuantity(value);
+                }
+            }
+            return 0;
+        };
+        if (Array.isArray(data)) {
+            return data.reduce((sum, item) => sum + extractQuantity(item), 0);
+        }
+        if (data && typeof data === 'object') {
+            return extractQuantity(data);
+        }
+        this.logger.warn({ skuId, warehouseId, body: data }, 'VTEX getSkuInventory returned unexpected payload; assuming zero quantity');
+        return 0;
     }
     async getSkuById(skuId) {
         const url = `${this.baseUrl()}/catalog/pvt/stockkeepingunit/${skuId}`;
@@ -146,11 +176,50 @@ let VtexCatalogClient = class VtexCatalogClient {
         }
         return data
             .map((file) => ({
-            url: file?.Url ?? file?.url,
+            url: this.buildVtexImageUrl(file),
             isMain: Boolean(file?.IsMain) || file?.Position === 0,
             position: Number(file?.Position ?? 9999),
         }))
-            .filter((image) => Boolean(image.url));
+            .filter((image) => Boolean(image.url))
+            .map((image) => ({
+            url: image.url,
+            isMain: image.isMain,
+            position: image.position,
+        }));
+    }
+    buildVtexImageUrl(file) {
+        const rawLocation = (typeof file?.FileLocation === 'string' && file.FileLocation) ||
+            (typeof file?.fileLocation === 'string' && file.fileLocation) ||
+            '';
+        const formatted = this.normalizeFileLocation(rawLocation);
+        if (formatted) {
+            return formatted;
+        }
+        const fallback = (typeof file?.Url === 'string' && file.Url) ||
+            (typeof file?.url === 'string' && file.url) ||
+            '';
+        return fallback?.trim() || undefined;
+    }
+    normalizeFileLocation(location) {
+        if (!location) {
+            return undefined;
+        }
+        const trimmed = location.trim();
+        if (!trimmed) {
+            return undefined;
+        }
+        if (/^https?:\/\//i.test(trimmed)) {
+            return trimmed;
+        }
+        const sanitized = trimmed.replace(/^\/+/, '');
+        if (!sanitized) {
+            return undefined;
+        }
+        const accountPrefix = `${this.account}.`;
+        const prefixed = sanitized.startsWith(accountPrefix)
+            ? sanitized
+            : `${accountPrefix}${sanitized}`;
+        return `https://${prefixed}`;
     }
     baseUrl() {
         if (this.domainOverride) {
