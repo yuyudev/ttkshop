@@ -24,16 +24,7 @@ export class InventoryService {
     this.logger.setContext(InventoryService.name);
   }
 
-  @Cron('*/10 * * * *')
-  async scheduledSync(): Promise<void> {
-    const distinctShops = await this.prisma.tiktokAuth.findMany({
-      select: { shopId: true },
-    });
-
-    for (const { shopId } of distinctShops) {
-      await this.syncInventory(shopId, {});
-    }
-  }
+  // Cronjob removido temporariamente; sync manual via endpoint /internal/inventory/sync
 
   async syncInventory(shopId: string, payload: InventorySyncDto) {
     const mappings = (await this.prisma.productMap.findMany({

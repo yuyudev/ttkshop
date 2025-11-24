@@ -1,57 +1,29 @@
 /* eslint-disable no-console */
 const { PrismaClient } = require('@prisma/client');
-const { createHash, createCipheriv, randomBytes } = require('crypto');
+
+// Edite os valores abaixo para popular o tiktokAuth sem precisar de variáveis de ambiente
+const SEED_CONFIG = {
+  SHOP_ID: 'PIN-4gAAAAC2ANmYH_dQM0XH8boI7T4gATd7POe-4idtM3Jh9ab8nw',
+  TIKTOK_ACCESS_TOKEN: 'ROW_Lg9D3gAAAAAGUr2nuotW1kF3eTIEZrP4Cg9C_KCIPHST8b6vOJreqPKdJOTQXgQqFmHapLvjPnwuj-NxYXntdA3S-4_tr6b0pKc0Z-vsPuVuDA7jfqg-6yxkuzi9mKEiUtwhn8wCSVnPatggBxv8V54l3-yT3fu7',
+  TIKTOK_REFRESH_TOKEN: 'ROW_8_i4rQAAAADZtzvbPuBIIkeYAHT0GV__gvR52aUJEEW1Jedo6VuQS0oEBdF7colRSyW5Pf7nupU',
+  TIKTOK_SCOPES: null,
+  // Data de expiração do access token (ISO) ou número de segundos a partir de agora
+  ACCESS_TOKEN_EXPIRES_AT: null,
+  ACCESS_TOKEN_EXPIRES_IN_SECONDS: 1764337733,
+};
 
 const prisma = new PrismaClient();
 
-const requiredEnv = [
-  'SHOP_ID',
-  'TIKTOK_ACCESS_TOKEN',
-  'TIKTOK_REFRESH_TOKEN',
-  'TOKEN_ENCRYPTION_KEY',
-];
-
-for (const key of requiredEnv) {
-  if (!process.env[key]) {
-    console.error(`Missing required environment variable: ${key}`);
-    process.exit(1);
-  }
-}
-
-const {
-  SHOP_ID,
-  TIKTOK_ACCESS_TOKEN,
-  TIKTOK_REFRESH_TOKEN,
-  TOKEN_ENCRYPTION_KEY,
-  TIKTOK_SCOPES,
-  ACCESS_TOKEN_EXPIRES_AT,
-  ACCESS_TOKEN_EXPIRES_IN_SECONDS,
-} = process.env;
-
-const deriveAesKey = () =>
-  createHash('sha256')
-    .update(TOKEN_ENCRYPTION_KEY)
-    .digest();
-
-const encryptRefreshToken = (value) => {
-  const key = deriveAesKey();
-  const iv = randomBytes(12);
-  const cipher = createCipheriv('aes-256-gcm', key, iv);
-  const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
-  const authTag = cipher.getAuthTag();
-  return Buffer.concat([iv, authTag, encrypted]).toString('base64');
-};
-
 const resolveExpiry = () => {
-  if (ACCESS_TOKEN_EXPIRES_AT) {
-    const date = new Date(ACCESS_TOKEN_EXPIRES_AT);
+  if (SEED_CONFIG.ACCESS_TOKEN_EXPIRES_AT) {
+    const date = new Date(SEED_CONFIG.ACCESS_TOKEN_EXPIRES_AT);
     if (Number.isNaN(date.getTime())) {
       throw new Error('ACCESS_TOKEN_EXPIRES_AT deve ser uma data ISO válida');
     }
     return date;
   }
 
-  const seconds = Number(ACCESS_TOKEN_EXPIRES_IN_SECONDS ?? 3600);
+  const seconds = Number(SEED_CONFIG.ACCESS_TOKEN_EXPIRES_IN_SECONDS ?? 3600);
   if (!Number.isFinite(seconds) || seconds <= 0) {
     throw new Error('ACCESS_TOKEN_EXPIRES_IN_SECONDS deve ser um número positivo');
   }
@@ -60,7 +32,17 @@ const resolveExpiry = () => {
 };
 
 async function main() {
-  const encryptedRefresh = encryptRefreshToken(TIKTOK_REFRESH_TOKEN);
+  const {
+    SHOP_ID,
+    TIKTOK_ACCESS_TOKEN,
+    TIKTOK_REFRESH_TOKEN,
+    TIKTOK_SCOPES,
+  } = SEED_CONFIG;
+
+  if (!SHOP_ID || !TIKTOK_ACCESS_TOKEN || !TIKTOK_REFRESH_TOKEN) {
+    throw new Error('Preencha SHOP_ID, TIKTOK_ACCESS_TOKEN e TIKTOK_REFRESH_TOKEN no SEED_CONFIG');
+  }
+
   const accessExpiresAt = resolveExpiry();
 
   await prisma.tiktokAuth.upsert({
@@ -68,14 +50,14 @@ async function main() {
     update: {
       accessToken: TIKTOK_ACCESS_TOKEN,
       accessExpiresAt,
-      refreshToken: encryptedRefresh,
+      refreshToken: TIKTOK_REFRESH_TOKEN,
       scopes: TIKTOK_SCOPES ?? null,
     },
     create: {
       shopId: SHOP_ID,
       accessToken: TIKTOK_ACCESS_TOKEN,
       accessExpiresAt,
-      refreshToken: encryptedRefresh,
+      refreshToken: TIKTOK_REFRESH_TOKEN,
       scopes: TIKTOK_SCOPES ?? null,
     },
   });

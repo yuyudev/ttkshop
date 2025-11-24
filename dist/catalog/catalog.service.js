@@ -175,6 +175,21 @@ let CatalogService = CatalogService_1 = class CatalogService {
                     seenSizes.add(normalized);
                 }
             }
+            const hasAvailableStock = skuInputs.some((skuInput) => Number(skuInput.quantity ?? 0) > 0);
+            if (!hasAvailableStock) {
+                for (const skuInput of skuInputs) {
+                    processedSkuIds.add(skuInput.vtexSkuId);
+                }
+                this.logger.info({
+                    shopId,
+                    productId,
+                }, 'Skipping product sync because all SKUs have zero inventory');
+                return {
+                    processedSkus: skuInputs.length,
+                    syncedSkus: 0,
+                    errors,
+                };
+            }
             const categoryFromMappings = effectiveMappings.find((mapping) => mapping.ttsCategoryId)?.ttsCategoryId ?? null;
             let resolvedCategoryId = categoryFromMappings;
             let categorySource = categoryFromMappings ? 'mapping' : 'fallback';

@@ -153,6 +153,12 @@ npm run test:e2e # cenários e2e (supertest)
 3. Preencha a tabela `VtexCategoryMap` com os relacionamentos VTEX → TikTok que desejar priorizar. Itens sem mapeamento usam `TIKTOK_DEFAULT_CATEGORY_ID` como fallback.
 4. O endpoint `POST /internal/catalog/sync/:productId` aplica a categoria mapeada automaticamente ao criar produtos novos.
 
+### Sincronização completa via cron/CLI
+- Existem duas formas de disparar o sync de todos os produtos por loja:
+  - Automático: execução única em 20/11/2025 às 00:01 (horário de Brasília) conforme `CatalogScheduler`.
+  - Manual: `npm run catalog:sync-all -- --shop=SHOP_ID [--start=PRODUCT_ID]`
+  - O comando manual inicializa o Nest em modo CLI, chama o scheduler internamente e segue o mesmo fluxo utilizado no cron.
+
 ### Próximos passos sugeridos
 - Configurar monitoramento Prometheus/Grafana.
 - Aumentar cobertura de testes unitários dos clients.

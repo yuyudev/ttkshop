@@ -9,7 +9,6 @@ export declare class InventoryService {
     private readonly tiktokClient;
     private readonly logger;
     constructor(prisma: PrismaService, vtexClient: VtexCatalogClient, tiktokClient: TiktokProductClient, logger: PinoLogger);
-    scheduledSync(): Promise<void>;
     syncInventory(shopId: string, payload: InventorySyncDto): Promise<{
         shopId: string;
         warehouseId: string;

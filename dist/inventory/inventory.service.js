@@ -12,7 +12,6 @@ var InventoryService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.InventoryService = void 0;
 const common_1 = require("@nestjs/common");
-const schedule_1 = require("@nestjs/schedule");
 const nestjs_pino_1 = require("nestjs-pino");
 const prisma_service_1 = require("../prisma/prisma.service");
 const vtex_catalog_client_1 = require("../catalog/vtex-catalog.client");
@@ -24,14 +23,6 @@ let InventoryService = InventoryService_1 = class InventoryService {
         this.tiktokClient = tiktokClient;
         this.logger = logger;
         this.logger.setContext(InventoryService_1.name);
-    }
-    async scheduledSync() {
-        const distinctShops = await this.prisma.tiktokAuth.findMany({
-            select: { shopId: true },
-        });
-        for (const { shopId } of distinctShops) {
-            await this.syncInventory(shopId, {});
-        }
     }
     async syncInventory(shopId, payload) {
         const mappings = (await this.prisma.productMap.findMany({
@@ -75,12 +66,6 @@ let InventoryService = InventoryService_1 = class InventoryService {
     }
 };
 exports.InventoryService = InventoryService;
-__decorate([
-    (0, schedule_1.Cron)('*/10 * * * *'),
-    __metadata("design:type", Function),
-    __metadata("design:paramtypes", []),
-    __metadata("design:returntype", Promise)
-], InventoryService.prototype, "scheduledSync", null);
 exports.InventoryService = InventoryService = InventoryService_1 = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [prisma_service_1.PrismaService,

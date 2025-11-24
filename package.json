@@ -19,6 +19,7 @@
     "prisma:migrate": "prisma migrate dev",
     "prisma:deploy": "prisma migrate deploy",
     "tiktok:import-categories": "ts-node scripts/import-tiktok-categories.ts",
+    "catalog:sync-all": "ts-node scripts/sync-all-products.ts",
     "ok": "pm2 delete 0 && nest build && pm2 start dist/main.js"
   },
   "dependencies": {

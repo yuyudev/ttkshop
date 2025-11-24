@@ -17,6 +17,7 @@ import { TiktokProductClient } from './catalog/tiktok-product.client';
 import { VtexCatalogClient } from './catalog/vtex-catalog.client';
 import { CategoryMappingService } from './catalog/category-mapping.service';
 import { CategoryAiService } from './catalog/category-ai.service';
+import { CatalogScheduler } from './catalog/catalog.scheduler';
 import { ApiKeyAuthGuard } from './auth/auth.guard';
 import { TiktokShopService } from './auth/tiktokshop.service';
 import { TokenCryptoService } from './common/token-crypto.service';
@@ -42,6 +43,15 @@ import { generateRequestId } from './common/utils';
     }),
     LoggerModule.forRoot({
       pinoHttp: {
+        serializers: {
+          req: (req: any) => (req?.id ? { id: req.id } : undefined),
+          res: () => undefined,
+          err: (err: any) => ({
+            type: err?.type,
+            message: err?.message,
+            stack: process.env.NODE_ENV === 'production' ? undefined : err?.stack,
+          }),
+        },
         transport:
           process.env.NODE_ENV !== 'production'
             ? {
@@ -86,6 +96,7 @@ import { generateRequestId } from './common/utils';
     CatalogService,
     CategoryMappingService,
     CategoryAiService,
+    CatalogScheduler,
     TiktokProductClient,
     VtexCatalogClient,
     InventoryService,
