@@ -53,7 +53,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     status: 'imported',
                 },
             });
-            await this.logisticsService.generateLabel(shopId, orderId);
+            await this.logisticsService.generateLabel(shopId, orderId, orderDetails?.payment?.total ?? 0);
         });
     }
     async getLabel(orderId) {

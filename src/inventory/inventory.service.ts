@@ -78,4 +78,57 @@ export class InventoryService {
       results,
     };
   }
+
+  async handleVtexWebhook(payload: any) {
+    // VTEX Inventory Broadcaster payload example:
+    // { "IdSku": "1", "HasStockKeepingUnitRemovedFromAffiliateId": false, "IdAffiliate": "..." }
+    // Or sometimes a list. We'll handle single object or array.
+
+    const items = Array.isArray(payload) ? payload : [payload];
+    const skuIds = items
+      .map((item) => item?.IdSku || item?.idSku || item?.skuId)
+      .filter((id) => !!id);
+
+    if (!skuIds.length) {
+      this.logger.warn({ payload }, 'Received VTEX inventory webhook with no valid SKUs');
+      return { status: 'ignored', reason: 'no_skus_found' };
+    }
+
+    this.logger.info({ skuIds }, 'Processing VTEX inventory webhook');
+
+    // Reusing the sync logic but filtering by these SKUs
+    // We need to find which shops have these SKUs mapped.
+    // Since we might have multiple shops, we need to find mappings for these SKUs across all shops.
+
+    const mappings = await this.prisma.productMap.findMany({
+      where: {
+        vtexSkuId: { in: skuIds },
+        status: 'synced',
+        ttsSkuId: { not: null },
+      },
+    });
+
+    if (!mappings.length) {
+      return { status: 'ignored', reason: 'skus_not_mapped' };
+    }
+
+    // Group by Shop to optimize calls (though syncInventory takes one shop)
+    // Actually syncInventory is designed for one shop.
+    // We can iterate over unique shops found in mappings.
+
+    const shops = [...new Set(mappings.map((m) => m.shopId))];
+    const results = [];
+
+    for (const shopId of shops) {
+      const shopSkuIds = mappings
+        .filter((m) => m.shopId === shopId)
+        .map((m) => m.vtexSkuId);
+
+      // Call existing sync logic for this shop and specific SKUs
+      const result = await this.syncInventory(shopId, { skuIds: shopSkuIds });
+      results.push(result);
+    }
+
+    return { status: 'processed', results };
+  }
 }

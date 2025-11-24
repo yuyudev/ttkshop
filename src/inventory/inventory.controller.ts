@@ -11,12 +11,20 @@ import { InventorySyncDto, ZodValidationPipe, inventorySyncSchema } from '../com
   required: true,
   description: 'Chave interna do middleware para autorizar o acesso às rotas',
 })
-@UseGuards(ApiKeyAuthGuard)
-@Controller('internal/inventory')
+@Controller()
 export class InventoryController {
-  constructor(private readonly inventoryService: InventoryService) {}
+  constructor(private readonly inventoryService: InventoryService) { }
 
-  @Post('sync')
+  @UseGuards(ApiKeyAuthGuard)
+  @Post('webhooks/vtex/inventory')
+  async handleVtexWebhook(@Body() payload: any) {
+    // Payload VTEX Broadcaster geralmente é { "IdSku": "123", "An": "...", ... }
+    // Vamos aceitar genérico e processar no service
+    return this.inventoryService.handleVtexWebhook(payload);
+  }
+
+  @UseGuards(ApiKeyAuthGuard)
+  @Post('internal/inventory/sync')
   async manualSync(
     @Headers('x-tts-shopid') shopId: string,
     @Body(new ZodValidationPipe<InventorySyncDto>(inventorySyncSchema))

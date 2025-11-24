@@ -30,9 +30,9 @@ let VtexOrdersClient = class VtexOrdersClient {
         const url = `${this.baseUrl()}/oms/pvt/orders/${orderId}`;
         return (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.headers() }));
     }
-    async updateTracking(orderId, payload) {
+    async updateTracking(orderId, invoiceData) {
         const url = `${this.baseUrl()}/oms/pvt/orders/${orderId}/invoice`;
-        return (0, rxjs_1.firstValueFrom)(this.http.post(url, payload, { headers: this.headers() }));
+        return (0, rxjs_1.firstValueFrom)(this.http.post(url, invoiceData, { headers: this.headers() }));
     }
     baseUrl() {
         if (this.domainOverride) {

@@ -33,19 +33,23 @@ describe('Catalog Sync (e2e)', () => {
       Id: 10,
       Name: 'Produto Teste',
       Description: 'Descrição',
-      CategoryId: 600001,
-      BrandId: 123,
       BrandName: 'Marca Teste',
     }),
+    getProductWithSkus: jest.fn().mockResolvedValue({
+      productId: 'prod-10',
+      skus: [{ id: 'sku-10' }],
+    }),
+    getSkuInventory: jest.fn().mockResolvedValue(5),
   };
 
   const tiktokProductClientMock = {
     createProduct: jest.fn().mockResolvedValue({
       productId: 'tik-10',
-      skuId: 'tik-sku-10',
+      skuIds: { 'sku-10': 'tik-sku-10' },
       raw: { data: { product_id: 'tik-10', skus: [{ id: 'tik-sku-10' }] } },
     }),
     updateProduct: jest.fn(),
+    updateStock: jest.fn(),
   };
 
   beforeAll(async () => {

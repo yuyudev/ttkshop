@@ -1,16 +1,19 @@
 import { PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { TiktokLogisticsClient } from './tiktok-logistics.client';
+import { VtexOrdersClient } from '../orders/vtex-orders.client';
 export declare class LogisticsService {
     private readonly prisma;
     private readonly logisticsClient;
+    private readonly vtexOrdersClient;
     private readonly logger;
-    constructor(prisma: PrismaService, logisticsClient: TiktokLogisticsClient, logger: PinoLogger);
-    generateLabel(shopId: string, orderId: string): Promise<{
+    constructor(prisma: PrismaService, logisticsClient: TiktokLogisticsClient, vtexOrdersClient: VtexOrdersClient, logger: PinoLogger);
+    generateLabel(shopId: string, orderId: string, orderValue?: number): Promise<{
         orderId: string;
         labelUrl: any;
         document: any;
     }>;
+    private updateVtexTracking;
     getLabel(orderId: string): Promise<{
         orderId: string;
         labelUrl: string;

@@ -25,4 +25,28 @@ export declare class InventoryService {
             inventory?: undefined;
         })[];
     }>;
+    handleVtexWebhook(payload: any): Promise<{
+        status: string;
+        reason: string;
+        results?: undefined;
+    } | {
+        status: string;
+        results: {
+            shopId: string;
+            warehouseId: string;
+            count: number;
+            results: ({
+                skuId: string;
+                inventory: number;
+                status: string;
+                error?: undefined;
+            } | {
+                skuId: string;
+                status: string;
+                error: string;
+                inventory?: undefined;
+            })[];
+        }[];
+        reason?: undefined;
+    }>;
 }

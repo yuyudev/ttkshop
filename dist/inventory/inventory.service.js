@@ -64,6 +64,37 @@ let InventoryService = InventoryService_1 = class InventoryService {
             results,
         };
     }
+    async handleVtexWebhook(payload) {
+        const items = Array.isArray(payload) ? payload : [payload];
+        const skuIds = items
+            .map((item) => item?.IdSku || item?.idSku || item?.skuId)
+            .filter((id) => !!id);
+        if (!skuIds.length) {
+            this.logger.warn({ payload }, 'Received VTEX inventory webhook with no valid SKUs');
+            return { status: 'ignored', reason: 'no_skus_found' };
+        }
+        this.logger.info({ skuIds }, 'Processing VTEX inventory webhook');
+        const mappings = await this.prisma.productMap.findMany({
+            where: {
+                vtexSkuId: { in: skuIds },
+                status: 'synced',
+                ttsSkuId: { not: null },
+            },
+        });
+        if (!mappings.length) {
+            return { status: 'ignored', reason: 'skus_not_mapped' };
+        }
+        const shops = [...new Set(mappings.map((m) => m.shopId))];
+        const results = [];
+        for (const shopId of shops) {
+            const shopSkuIds = mappings
+                .filter((m) => m.shopId === shopId)
+                .map((m) => m.vtexSkuId);
+            const result = await this.syncInventory(shopId, { skuIds: shopSkuIds });
+            results.push(result);
+        }
+        return { status: 'processed', results };
+    }
 };
 exports.InventoryService = InventoryService;
 exports.InventoryService = InventoryService = InventoryService_1 = __decorate([

@@ -22,6 +22,9 @@ let InventoryController = class InventoryController {
     constructor(inventoryService) {
         this.inventoryService = inventoryService;
     }
+    async handleVtexWebhook(payload) {
+        return this.inventoryService.handleVtexWebhook(payload);
+    }
     async manualSync(shopId, payload) {
         if (!shopId) {
             throw new common_1.BadRequestException('Missing x-tts-shopid header');
@@ -31,7 +34,16 @@ let InventoryController = class InventoryController {
 };
 exports.InventoryController = InventoryController;
 __decorate([
-    (0, common_1.Post)('sync'),
+    (0, common_1.UseGuards)(auth_guard_1.ApiKeyAuthGuard),
+    (0, common_1.Post)('webhooks/vtex/inventory'),
+    __param(0, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [Object]),
+    __metadata("design:returntype", Promise)
+], InventoryController.prototype, "handleVtexWebhook", null);
+__decorate([
+    (0, common_1.UseGuards)(auth_guard_1.ApiKeyAuthGuard),
+    (0, common_1.Post)('internal/inventory/sync'),
     __param(0, (0, common_1.Headers)('x-tts-shopid')),
     __param(1, (0, common_1.Body)(new dto_1.ZodValidationPipe(dto_1.inventorySyncSchema))),
     __metadata("design:type", Function),
@@ -45,8 +57,7 @@ exports.InventoryController = InventoryController = __decorate([
         required: true,
         description: 'Chave interna do middleware para autorizar o acesso às rotas',
     }),
-    (0, common_1.UseGuards)(auth_guard_1.ApiKeyAuthGuard),
-    (0, common_1.Controller)('internal/inventory'),
+    (0, common_1.Controller)(),
     __metadata("design:paramtypes", [inventory_service_1.InventoryService])
 ], InventoryController);
 //# sourceMappingURL=inventory.controller.js.map

@@ -50,7 +50,11 @@ export class OrdersService {
         },
       });
 
-      await this.logisticsService.generateLabel(shopId, orderId);
+      await this.logisticsService.generateLabel(
+        shopId,
+        orderId,
+        orderDetails?.payment?.total ?? 0,
+      );
     });
   }
 

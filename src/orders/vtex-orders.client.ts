@@ -30,9 +30,20 @@ export class VtexOrdersClient {
     return firstValueFrom(this.http.get(url, { headers: this.headers() }));
   }
 
-  async updateTracking(orderId: string, payload: unknown) {
+  async updateTracking(orderId: string, invoiceData: any) {
+    // VTEX Invoice API: POST /oms/pvt/orders/{orderId}/invoice
+    // Payload structure:
+    // {
+    //   "type": "Output",
+    //   "invoiceNumber": "...",
+    //   "issuanceDate": "2024-01-01",
+    //   "invoiceValue": 1000,
+    //   "trackingNumber": "...",
+    //   "courier": "...",
+    //   "items": [...]
+    // }
     const url = `${this.baseUrl()}/oms/pvt/orders/${orderId}/invoice`;
-    return firstValueFrom(this.http.post(url, payload, { headers: this.headers() }));
+    return firstValueFrom(this.http.post(url, invoiceData, { headers: this.headers() }));
   }
 
   private baseUrl(): string {
