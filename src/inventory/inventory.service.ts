@@ -38,13 +38,13 @@ export class InventoryService {
     const skuIds = payload.skuIds?.length
       ? payload.skuIds
       : mappings.map((item: ProductMapRecord) => item.vtexSkuId);
-    const warehouseId = payload.warehouseId ?? 'DEFAULT';
+    const warehouseId = payload.warehouseId ?? '1_1';
 
     const results = [];
     for (const skuId of skuIds) {
       try {
-        const sku = await this.vtexClient.getSkuById(skuId);
-        const inventory = sku.StockBalance ?? sku.stockBalance ?? 0;
+        // Use Logistics API to get real-time inventory
+        const inventory = await this.vtexClient.getSkuInventory(skuId, warehouseId);
 
         const mapping = mappings.find((item: ProductMapRecord) => item.vtexSkuId === skuId);
         if (!mapping?.ttsSkuId || !mapping.ttsProductId) {

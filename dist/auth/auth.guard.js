@@ -19,7 +19,7 @@ let ApiKeyAuthGuard = class ApiKeyAuthGuard {
     canActivate(context) {
         const request = context.switchToHttp().getRequest();
         const headerKey = request.headers['x-api-key'] ?? request.headers['x-api_key'];
-        const queryKey = request.query['apiKey'];
+        const queryKey = (request.query['apiKey'] ?? request.query['x-api-key']);
         const provided = headerKey || queryKey;
         const expected = this.configService.getOrThrow('MIDDLEWARE_API_KEY', { infer: true });
         if (!provided || provided !== expected) {

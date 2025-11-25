@@ -103,9 +103,9 @@ let VtexCatalogClient = class VtexCatalogClient {
                 return 0;
             }
             const candidates = [
+                payload.availableQuantity,
                 payload.totalQuantity,
                 payload.quantity,
-                payload.availableQuantity,
             ];
             for (const value of candidates) {
                 if (value !== undefined && value !== null) {

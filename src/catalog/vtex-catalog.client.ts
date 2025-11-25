@@ -196,10 +196,11 @@ export class VtexCatalogClient {
       if (!payload || typeof payload !== 'object') {
         return 0;
       }
+      // Prioriza availableQuantity (estoque disponível real)
       const candidates = [
+        payload.availableQuantity,
         payload.totalQuantity,
         payload.quantity,
-        payload.availableQuantity,
       ];
       for (const value of candidates) {
         if (value !== undefined && value !== null) {
@@ -388,5 +389,5 @@ export class VtexCatalogClient {
     };
   }
 
-  
+
 }

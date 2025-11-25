@@ -267,7 +267,7 @@ export class TiktokProductClient {
       );
     }
   }
-  
+
   /**
    * Cria a request assinada para os endpoints OpenAPI (202309),
    * seguindo o fluxo da doc de assinatura.
@@ -787,7 +787,7 @@ export class TiktokProductClient {
     }
     // se ainda estiver curto, adiciona um sufixo genérico
     if (title.length < 25) {
-      title = `${title} - produto original`;
+      title = `${title}`;
     }
 
     // limita a 255 caracteres, conforme doc
