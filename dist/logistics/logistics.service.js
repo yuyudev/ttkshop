@@ -25,10 +25,12 @@ let LogisticsService = LogisticsService_1 = class LogisticsService {
         this.logger.setContext(LogisticsService_1.name);
     }
     async generateLabel(shopId, orderId, orderValue) {
+        this.logger.info({ shopId, orderId, orderValue }, 'Generating shipping label');
         const mapping = await this.prisma.orderMap.findUnique({
             where: { ttsOrderId: orderId },
         });
         if (!mapping) {
+            this.logger.error({ orderId }, 'Order mapping not found for label generation');
             throw new common_1.NotFoundException(`Order mapping not found for TikTok order ${orderId}`);
         }
         const response = await this.logisticsClient.getOrCreateShippingDocument(shopId, orderId);
@@ -36,6 +38,7 @@ let LogisticsService = LogisticsService_1 = class LogisticsService {
             response.data?.data?.document_url ??
             response.data?.label_url ??
             null;
+        this.logger.info({ orderId, labelUrl }, 'Shipping label generated');
         await this.prisma.orderMap.update({
             where: { ttsOrderId: orderId },
             data: {
@@ -52,8 +55,12 @@ let LogisticsService = LogisticsService_1 = class LogisticsService {
                     docDetails.data?.shipping_provider ??
                     'TikTok Shipping';
                 if (trackingNumber) {
+                    this.logger.info({ orderId, vtexOrderId: mapping.vtexOrderId, trackingNumber, provider }, 'Updating VTEX with tracking info');
                     await this.updateVtexTracking(mapping.vtexOrderId, trackingNumber, provider, orderValue ?? 0);
                     this.logger.info({ orderId, vtexOrderId: mapping.vtexOrderId }, 'Updated VTEX tracking');
+                }
+                else {
+                    this.logger.warn({ orderId }, 'No tracking number available from TikTok');
                 }
             }
             catch (err) {

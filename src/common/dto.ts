@@ -13,11 +13,15 @@ export const inventorySyncSchema = z.object({
 export type InventorySyncDto = z.infer<typeof inventorySyncSchema>;
 
 export const orderWebhookSchema = z.object({
-  event_type: z.string(),
-  order_id: z.string(),
+  type: z.number(),
   shop_id: z.string(),
-  data: z.record(z.any()).optional(),
-});
+  data: z.object({
+    order_id: z.string(),
+    order_status: z.string().optional(),
+  }).passthrough(),
+  timestamp: z.number().optional(),
+}).passthrough();
+
 export type OrderWebhookDto = z.infer<typeof orderWebhookSchema>;
 
 export const tikTokCallbackQuerySchema = z
@@ -35,7 +39,7 @@ export type TikTokCallbackQuery = z.infer<typeof tikTokCallbackQuerySchema>;
 
 @Injectable()
 export class ZodValidationPipe<T> implements PipeTransform {
-  constructor(private readonly schema: ZodSchema<T>) {}
+  constructor(private readonly schema: ZodSchema<T>) { }
 
   transform(value: unknown): T {
     const result = this.schema.safeParse(value);

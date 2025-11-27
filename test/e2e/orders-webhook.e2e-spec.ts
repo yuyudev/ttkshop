@@ -87,9 +87,12 @@ describe('TikTok Orders Webhook (e2e)', () => {
 
   it('processes orders idempotently', async () => {
     const payload = {
-      event_type: 'ORDER_STATUS',
-      order_id: 'order-001',
+      type: 1,
       shop_id: 'shop123',
+      data: {
+        order_id: 'order-001',
+        order_status: 'AWAITING_SHIPMENT',
+      },
     };
 
     const first = await ordersService.handleWebhook(payload);

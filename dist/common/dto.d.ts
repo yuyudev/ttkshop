@@ -20,21 +20,48 @@ export declare const inventorySyncSchema: z.ZodObject<{
 }>;
 export type InventorySyncDto = z.infer<typeof inventorySyncSchema>;
 export declare const orderWebhookSchema: z.ZodObject<{
-    event_type: z.ZodString;
-    order_id: z.ZodString;
+    type: z.ZodNumber;
     shop_id: z.ZodString;
-    data: z.ZodOptional<z.ZodRecord<z.ZodString, z.ZodAny>>;
-}, "strip", z.ZodTypeAny, {
-    shop_id: string;
-    event_type: string;
-    order_id: string;
-    data?: Record<string, any> | undefined;
-}, {
-    shop_id: string;
-    event_type: string;
-    order_id: string;
-    data?: Record<string, any> | undefined;
-}>;
+    data: z.ZodObject<{
+        order_id: z.ZodString;
+        order_status: z.ZodOptional<z.ZodString>;
+    }, "passthrough", z.ZodTypeAny, z.objectOutputType<{
+        order_id: z.ZodString;
+        order_status: z.ZodOptional<z.ZodString>;
+    }, z.ZodTypeAny, "passthrough">, z.objectInputType<{
+        order_id: z.ZodString;
+        order_status: z.ZodOptional<z.ZodString>;
+    }, z.ZodTypeAny, "passthrough">>;
+    timestamp: z.ZodOptional<z.ZodNumber>;
+}, "passthrough", z.ZodTypeAny, z.objectOutputType<{
+    type: z.ZodNumber;
+    shop_id: z.ZodString;
+    data: z.ZodObject<{
+        order_id: z.ZodString;
+        order_status: z.ZodOptional<z.ZodString>;
+    }, "passthrough", z.ZodTypeAny, z.objectOutputType<{
+        order_id: z.ZodString;
+        order_status: z.ZodOptional<z.ZodString>;
+    }, z.ZodTypeAny, "passthrough">, z.objectInputType<{
+        order_id: z.ZodString;
+        order_status: z.ZodOptional<z.ZodString>;
+    }, z.ZodTypeAny, "passthrough">>;
+    timestamp: z.ZodOptional<z.ZodNumber>;
+}, z.ZodTypeAny, "passthrough">, z.objectInputType<{
+    type: z.ZodNumber;
+    shop_id: z.ZodString;
+    data: z.ZodObject<{
+        order_id: z.ZodString;
+        order_status: z.ZodOptional<z.ZodString>;
+    }, "passthrough", z.ZodTypeAny, z.objectOutputType<{
+        order_id: z.ZodString;
+        order_status: z.ZodOptional<z.ZodString>;
+    }, z.ZodTypeAny, "passthrough">, z.objectInputType<{
+        order_id: z.ZodString;
+        order_status: z.ZodOptional<z.ZodString>;
+    }, z.ZodTypeAny, "passthrough">>;
+    timestamp: z.ZodOptional<z.ZodNumber>;
+}, z.ZodTypeAny, "passthrough">>;
 export type OrderWebhookDto = z.infer<typeof orderWebhookSchema>;
 export declare const tikTokCallbackQuerySchema: z.ZodEffects<z.ZodObject<{
     auth_code: z.ZodOptional<z.ZodString>;
@@ -43,23 +70,23 @@ export declare const tikTokCallbackQuerySchema: z.ZodEffects<z.ZodObject<{
     state: z.ZodOptional<z.ZodString>;
 }, "strip", z.ZodTypeAny, {
     code?: string | undefined;
-    auth_code?: string | undefined;
     shop_id?: string | undefined;
+    auth_code?: string | undefined;
     state?: string | undefined;
 }, {
     code?: string | undefined;
-    auth_code?: string | undefined;
     shop_id?: string | undefined;
+    auth_code?: string | undefined;
     state?: string | undefined;
 }>, {
     code?: string | undefined;
-    auth_code?: string | undefined;
     shop_id?: string | undefined;
+    auth_code?: string | undefined;
     state?: string | undefined;
 }, {
     code?: string | undefined;
-    auth_code?: string | undefined;
     shop_id?: string | undefined;
+    auth_code?: string | undefined;
     state?: string | undefined;
 }>;
 export type TikTokCallbackQuery = z.infer<typeof tikTokCallbackQuerySchema>;

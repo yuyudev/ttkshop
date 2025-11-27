@@ -7,6 +7,9 @@ export declare class TiktokOrderClient {
     private readonly configService;
     private readonly tiktokShopService;
     private readonly openBase;
+    private readonly appKey;
+    private readonly appSecret;
+    private readonly shopCipher;
     constructor(http: HttpService, configService: ConfigService<AppConfig>, tiktokShopService: TiktokShopService);
     listOrders(shopId: string, params?: Record<string, string>): Promise<import("axios").AxiosResponse<any, any, {}>>;
     getOrder(shopId: string, orderId: string): Promise<import("axios").AxiosResponse<any, any, {}>>;

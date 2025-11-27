@@ -15,33 +15,45 @@ const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
 const rxjs_1 = require("rxjs");
 const tiktokshop_service_1 = require("../auth/tiktokshop.service");
+const signer_1 = require("../common/signer");
 let TiktokOrderClient = class TiktokOrderClient {
     constructor(http, configService, tiktokShopService) {
         this.http = http;
         this.configService = configService;
         this.tiktokShopService = tiktokShopService;
         this.openBase = this.configService.getOrThrow('TIKTOK_BASE_OPEN', { infer: true });
+        this.appKey = this.configService.getOrThrow('TIKTOK_APP_KEY', { infer: true });
+        this.appSecret = this.configService.getOrThrow('TIKTOK_APP_SECRET', { infer: true });
+        this.shopCipher = this.configService.getOrThrow('TIKTOK_SHOP_CIPHER', { infer: true });
     }
     async listOrders(shopId, params = {}) {
-        return this.request(shopId, 'get', '/api/orders/search', undefined, params);
+        return this.request(shopId, 'get', '/order/202309/orders/search', undefined, params);
     }
     async getOrder(shopId, orderId) {
-        return this.request(shopId, 'get', `/api/orders/${orderId}`);
+        return this.request(shopId, 'get', '/order/202309/orders', undefined, { ids: orderId });
     }
     async ackOrder(shopId, orderId) {
-        return this.request(shopId, 'post', '/api/orders/ack', { order_id: orderId });
+        return this.request(shopId, 'post', '/order/202309/orders/ack', { order_ids: [orderId] });
     }
     async request(shopId, method, path, payload, params) {
         const token = await this.tiktokShopService.getAccessToken(shopId);
-        const url = `${this.openBase}${path}`;
-        const headers = {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json',
-        };
+        const baseUrl = this.openBase.replace(/\/$/, '');
+        const cleanPath = path.startsWith('/') ? path : `/${path}`;
+        const { url, headers, body } = (0, signer_1.buildSignedRequest)(baseUrl, cleanPath, this.appKey, this.appSecret, {
+            qs: {
+                shop_cipher: this.shopCipher,
+                shop_id: shopId,
+                ...params,
+            },
+            headers: {
+                'x-tts-access-token': token,
+            },
+            body: payload,
+        });
         if (method === 'get') {
-            return (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers, params }));
+            return (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers }));
         }
-        return (0, rxjs_1.firstValueFrom)(this.http.post(url, payload, { headers, params }));
+        return (0, rxjs_1.firstValueFrom)(this.http.post(url, body, { headers }));
     }
 };
 exports.TiktokOrderClient = TiktokOrderClient;

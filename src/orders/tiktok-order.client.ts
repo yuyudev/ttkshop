@@ -5,10 +5,14 @@ import { firstValueFrom } from 'rxjs';
 
 import { AppConfig } from '../common/config';
 import { TiktokShopService } from '../auth/tiktokshop.service';
+import { buildSignedRequest } from '../common/signer';
 
 @Injectable()
 export class TiktokOrderClient {
   private readonly openBase: string;
+  private readonly appKey: string;
+  private readonly appSecret: string;
+  private readonly shopCipher: string;
 
   constructor(
     private readonly http: HttpService,
@@ -16,18 +20,22 @@ export class TiktokOrderClient {
     private readonly tiktokShopService: TiktokShopService,
   ) {
     this.openBase = this.configService.getOrThrow<string>('TIKTOK_BASE_OPEN', { infer: true });
+    this.appKey = this.configService.getOrThrow<string>('TIKTOK_APP_KEY', { infer: true });
+    this.appSecret = this.configService.getOrThrow<string>('TIKTOK_APP_SECRET', { infer: true });
+    this.shopCipher = this.configService.getOrThrow<string>('TIKTOK_SHOP_CIPHER', { infer: true });
   }
 
   async listOrders(shopId: string, params: Record<string, string> = {}) {
-    return this.request(shopId, 'get', '/api/orders/search', undefined, params);
+    return this.request(shopId, 'get', '/order/202309/orders/search', undefined, params);
   }
 
   async getOrder(shopId: string, orderId: string) {
-    return this.request(shopId, 'get', `/api/orders/${orderId}`);
+    // API v202309 uses /order/202309/orders with ids query param
+    return this.request(shopId, 'get', '/order/202309/orders', undefined, { ids: orderId });
   }
 
   async ackOrder(shopId: string, orderId: string) {
-    return this.request(shopId, 'post', '/api/orders/ack', { order_id: orderId });
+    return this.request(shopId, 'post', '/order/202309/orders/ack', { order_ids: [orderId] });
   }
 
   private async request(
@@ -38,16 +46,36 @@ export class TiktokOrderClient {
     params?: Record<string, string>,
   ) {
     const token = await this.tiktokShopService.getAccessToken(shopId);
-    const url = `${this.openBase}${path}`;
-    const headers = {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    };
+
+    // Ensure base URL doesn't have trailing slash and path starts with slash
+    const baseUrl = this.openBase.replace(/\/$/, '');
+    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+
+    const { url, headers, body } = buildSignedRequest(
+      baseUrl,
+      cleanPath,
+      this.appKey,
+      this.appSecret,
+      {
+        qs: {
+          shop_cipher: this.shopCipher,
+          shop_id: shopId,
+          ...params,
+        },
+        headers: {
+          'x-tts-access-token': token,
+        },
+        body: payload,
+      }
+    );
+
+    // buildSignedRequest returns the full URL with query string (including sign, timestamp, app_key)
+    // So we should NOT pass params to axios again, otherwise they will be duplicated.
 
     if (method === 'get') {
-      return firstValueFrom(this.http.get(url, { headers, params }));
+      return firstValueFrom(this.http.get(url, { headers }));
     }
 
-    return firstValueFrom(this.http.post(url, payload, { headers, params }));
+    return firstValueFrom(this.http.post(url, body, { headers }));
   }
 }

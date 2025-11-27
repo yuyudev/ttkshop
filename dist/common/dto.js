@@ -20,11 +20,14 @@ exports.inventorySyncSchema = zod_1.z.object({
     warehouseId: zod_1.z.string().optional(),
 });
 exports.orderWebhookSchema = zod_1.z.object({
-    event_type: zod_1.z.string(),
-    order_id: zod_1.z.string(),
+    type: zod_1.z.number(),
     shop_id: zod_1.z.string(),
-    data: zod_1.z.record(zod_1.z.any()).optional(),
-});
+    data: zod_1.z.object({
+        order_id: zod_1.z.string(),
+        order_status: zod_1.z.string().optional(),
+    }).passthrough(),
+    timestamp: zod_1.z.number().optional(),
+}).passthrough();
 exports.tikTokCallbackQuerySchema = zod_1.z
     .object({
     auth_code: zod_1.z.string().optional(),

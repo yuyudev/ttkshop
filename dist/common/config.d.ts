@@ -30,6 +30,7 @@ export declare const configSchema: z.ZodObject<{
     VTEX_DOMAIN: z.ZodEffects<z.ZodOptional<z.ZodString>, string | undefined, string | undefined>;
     VTEX_APP_KEY: z.ZodString;
     VTEX_APP_TOKEN: z.ZodString;
+    VTEX_SALES_CHANNEL: z.ZodDefault<z.ZodOptional<z.ZodString>>;
     PUBLIC_BASE_URL: z.ZodString;
     TTS_REDIRECT_PATH: z.ZodString;
     MIDDLEWARE_API_KEY: z.ZodString;
@@ -62,6 +63,7 @@ export declare const configSchema: z.ZodObject<{
     VTEX_ENVIRONMENT: string;
     VTEX_APP_KEY: string;
     VTEX_APP_TOKEN: string;
+    VTEX_SALES_CHANNEL: string;
     PUBLIC_BASE_URL: string;
     TTS_REDIRECT_PATH: string;
     MIDDLEWARE_API_KEY: string;
@@ -120,6 +122,7 @@ export declare const configSchema: z.ZodObject<{
     TIKTOK_LISTING_PLATFORMS?: string | undefined;
     VTEX_ENVIRONMENT?: string | undefined;
     VTEX_DOMAIN?: string | undefined;
+    VTEX_SALES_CHANNEL?: string | undefined;
     REQUEST_TIMEOUT_MS?: string | undefined;
     HTTP_MAX_RETRIES?: string | undefined;
     VTEX_PAGE_SIZE?: string | undefined;

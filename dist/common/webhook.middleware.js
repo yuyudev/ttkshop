@@ -18,11 +18,12 @@ let TiktokWebhookMiddleware = class TiktokWebhookMiddleware {
         this.configService = configService;
     }
     use(req, res, next) {
-        const signature = (req.headers['x-signature'] || req.headers['x-tt-signature']);
+        const signature = (req.headers['x-signature'] || req.headers['x-tt-signature'] || req.headers['authorization']);
         if (!signature) {
             throw new common_1.UnauthorizedException('Missing TikTok webhook signature header');
         }
         const secret = this.configService.getOrThrow('TIKTOK_APP_SECRET', { infer: true });
+        const appKey = this.configService.getOrThrow('TIKTOK_APP_KEY', { infer: true });
         const rawBody = req.rawBody;
         const payload = typeof rawBody === 'string'
             ? rawBody
@@ -31,7 +32,8 @@ let TiktokWebhookMiddleware = class TiktokWebhookMiddleware {
                 : typeof req.body === 'string'
                     ? req.body
                     : JSON.stringify(req.body ?? {});
-        const computed = (0, crypto_1.createHmac)('sha256', secret).update(payload).digest('hex');
+        const signatureBase = appKey + payload;
+        const computed = (0, crypto_1.createHmac)('sha256', secret).update(signatureBase).digest('hex');
         if (computed !== signature) {
             throw new common_1.UnauthorizedException('Invalid TikTok webhook signature');
         }

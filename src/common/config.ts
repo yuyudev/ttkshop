@@ -93,9 +93,9 @@ export const configSchema = z.object({
     .transform((value) =>
       value && value.trim().length > 0
         ? value
-            .split(',')
-            .map((item) => item.trim())
-            .filter(Boolean)
+          .split(',')
+          .map((item) => item.trim())
+          .filter(Boolean)
         : undefined,
     ),
   VTEX_ACCOUNT: z.string().min(1, 'VTEX_ACCOUNT is required'),
@@ -109,6 +109,7 @@ export const configSchema = z.object({
     .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
   VTEX_APP_KEY: z.string().min(1, 'VTEX_APP_KEY is required'),
   VTEX_APP_TOKEN: z.string().min(1, 'VTEX_APP_TOKEN is required'),
+  VTEX_SALES_CHANNEL: z.string().optional().default('1'),
   PUBLIC_BASE_URL: z.string().url('PUBLIC_BASE_URL must be a valid URL'),
   TTS_REDIRECT_PATH: z.string().min(1, 'TTS_REDIRECT_PATH is required'),
   MIDDLEWARE_API_KEY: z.string().min(1, 'MIDDLEWARE_API_KEY is required'),

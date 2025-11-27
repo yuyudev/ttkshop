@@ -107,6 +107,7 @@ exports.configSchema = zod_1.z.object({
         .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
     VTEX_APP_KEY: zod_1.z.string().min(1, 'VTEX_APP_KEY is required'),
     VTEX_APP_TOKEN: zod_1.z.string().min(1, 'VTEX_APP_TOKEN is required'),
+    VTEX_SALES_CHANNEL: zod_1.z.string().optional().default('1'),
     PUBLIC_BASE_URL: zod_1.z.string().url('PUBLIC_BASE_URL must be a valid URL'),
     TTS_REDIRECT_PATH: zod_1.z.string().min(1, 'TTS_REDIRECT_PATH is required'),
     MIDDLEWARE_API_KEY: zod_1.z.string().min(1, 'MIDDLEWARE_API_KEY is required'),
