@@ -57,7 +57,7 @@ VTEX_FILE_PAGE_SIZE=50
 VTEX_APP_KEY=seu_vtex_app_key
 VTEX_APP_TOKEN=seu_vtex_app_token
 
-PUBLIC_BASE_URL=https://ttsscoremedia.com.br
+PUBLIC_BASE_URL=https://tts.scoremedia.com.br
 TTS_REDIRECT_PATH=/oauth/tiktokshop/callback
 
 MIDDLEWARE_API_KEY=sua_chave_interna

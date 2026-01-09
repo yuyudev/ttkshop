@@ -64,7 +64,7 @@ describe('OAuth Callback (controller)', () => {
 
     expect(redirectMock).toHaveBeenCalledWith(
       302,
-      'https://ttsscoremedia.com.br/oauth/tiktokshop/callback/success',
+      'https://tts.scoremedia.com.br/oauth/tiktokshop/callback/success',
     );
     expect(exchangeMock).toHaveBeenCalledWith('abc123', 'shop123');
   });

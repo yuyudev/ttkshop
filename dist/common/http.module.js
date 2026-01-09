@@ -61,7 +61,17 @@ let HttpClientConfigurator = HttpClientConfigurator_1 = class HttpClientConfigur
                 url: error.config?.url,
                 method: error.config?.method,
             };
-            this.logger.error({ err: safeError }, 'HTTP request failed');
+            const headers = this.sanitizeHeaders(error.config?.headers);
+            this.logger.error({
+                err: safeError,
+                request: {
+                    method: error.config?.method,
+                    url: error.config?.url,
+                    headers,
+                    params: error.config?.params,
+                    data: error.config?.data,
+                },
+            }, 'HTTP request failed');
             if (!config || retryCount >= this.maxRetries || !this.isRetriable(error)) {
                 throw error;
             }
@@ -75,6 +85,38 @@ let HttpClientConfigurator = HttpClientConfigurator_1 = class HttpClientConfigur
         const base = 250;
         const max = 2000;
         return Math.min(base * 2 ** (attempt - 1), max);
+    }
+    sanitizeHeaders(raw) {
+        const masked = {};
+        const sensitiveKeys = [
+            'authorization',
+            'x-tts-access-token',
+            'x-vtex-api-apptoken',
+            'x-vtex-api-appkey',
+            'x-api-key',
+            'app-token',
+            'appkey',
+            'apptoken',
+            'token',
+        ];
+        const maskValue = (value) => {
+            if (typeof value !== 'string') {
+                return String(value ?? '');
+            }
+            if (value.length <= 8) {
+                return '***';
+            }
+            return `${value.slice(0, 3)}***${value.slice(-2)}`;
+        };
+        Object.entries(raw || {}).forEach(([key, value]) => {
+            const lowered = key.toLowerCase();
+            if (sensitiveKeys.some((candidate) => lowered.includes(candidate))) {
+                masked[key] = maskValue(Array.isArray(value) ? value.join(',') : value);
+                return;
+            }
+            masked[key] = Array.isArray(value) ? value.join(',') : String(value);
+        });
+        return masked;
     }
     isRetriable(error) {
         if (error.code === 'ECONNABORTED' || error.code === 'ETIMEDOUT') {

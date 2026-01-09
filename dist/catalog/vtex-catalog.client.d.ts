@@ -82,5 +82,6 @@ export declare class VtexCatalogClient {
     private buildVtexImageUrl;
     private normalizeFileLocation;
     private baseUrl;
+    private pricingBaseUrl;
     private defaultHeaders;
 }

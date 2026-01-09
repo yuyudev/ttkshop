@@ -3,13 +3,13 @@ const { PrismaClient } = require('@prisma/client');
 
 // Edite os valores abaixo para popular o tiktokAuth sem precisar de variáveis de ambiente
 const SEED_CONFIG = {
-  SHOP_ID: 'PIN-4gAAAAC2ANmYH_dQM0XH8boI7T4gATd7POe-4idtM3Jh9ab8nw',
-  TIKTOK_ACCESS_TOKEN: 'ROW_Lg9D3gAAAAAGUr2nuotW1kF3eTIEZrP4Cg9C_KCIPHST8b6vOJreqPKdJOTQXgQqFmHapLvjPnwuj-NxYXntdA3S-4_tr6b0pKc0Z-vsPuVuDA7jfqg-6yxkuzi9mKEiUtwhn8wCSVnPatggBxv8V54l3-yT3fu7',
-  TIKTOK_REFRESH_TOKEN: 'ROW_8_i4rQAAAADZtzvbPuBIIkeYAHT0GV__gvR52aUJEEW1Jedo6VuQS0oEBdF7colRSyW5Pf7nupU',
+  SHOP_ID: '7496227062767651682',
+  TIKTOK_ACCESS_TOKEN: 'ROW_ke05kAAAAAAGUr2nuotW1kF3eTIEZrP4Cg9C_KCIPHST8b6vOJreqPKdJOTQXgQqFmHapLvjPnwuj-NxYXntdA3S-4_tr6b0QE5PCgjxsp6e-JrP-wBimY1QWznwPqRoUXh_pCoP0EtOaBZ_Gdc3q7TD3nkdtIUm',
+  TIKTOK_REFRESH_TOKEN: 'ROW_sAEHtgAAAADZtzvbPuBIIkeYAHT0GV__jg7WOjr5cF0WbNu-g3Wc2Y7my9YU86tnxxg7stdVdSE',
   TIKTOK_SCOPES: null,
   // Data de expiração do access token (ISO) ou número de segundos a partir de agora
   ACCESS_TOKEN_EXPIRES_AT: null,
-  ACCESS_TOKEN_EXPIRES_IN_SECONDS: 1764337733,
+  ACCESS_TOKEN_EXPIRES_IN_SECONDS: 1766581274,
 };
 
 const prisma = new PrismaClient();

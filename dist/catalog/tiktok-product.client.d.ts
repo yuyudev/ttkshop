@@ -64,6 +64,9 @@ export declare class TiktokProductClient {
     private normalizeBaseUrl;
     private parseProductResponse;
     private buildTikTokError;
+    private isExpiredError;
+    private withTokenRetry;
+    private uploadImageWithToken;
     private buildSellerSku;
     private buildExternalSkuId;
     private buildIdempotencyKey;

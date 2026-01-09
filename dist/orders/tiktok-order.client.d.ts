@@ -15,4 +15,6 @@ export declare class TiktokOrderClient {
     getOrder(shopId: string, orderId: string): Promise<import("axios").AxiosResponse<any, any, {}>>;
     ackOrder(shopId: string, orderId: string): Promise<import("axios").AxiosResponse<any, any, {}>>;
     private request;
+    private isExpiredError;
+    private withTokenRetry;
 }

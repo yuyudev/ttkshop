@@ -60,89 +60,92 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         this.logger.setContext(TiktokProductClient_1.name);
     }
     async createProduct(shopId, input, options = {}) {
-        const accessToken = await this.tiktokShopService.getAccessToken(shopId);
-        const payload = await this.buildProductPayload(shopId, accessToken, input, options);
-        this.logger.info({
-            shopId,
-            vtexProductId: input.product.Id,
-            skuCount: input.skus.length,
-        }, 'Creating product on TikTok');
-        const { url, headers, body } = this.buildSignedOpenApiRequest('/product/202309/products', accessToken, payload);
-        const response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, body, { headers }));
-        const parsed = this.parseProductResponse(response.data);
-        const code = response.data?.code;
-        const message = response.data?.message;
-        if (code !== undefined && code !== 0) {
-            throw this.buildTikTokError('createProduct', code, message, response.data);
-        }
-        if (!parsed.productId || !Object.keys(parsed.skuIds).length) {
-            throw new Error(`TikTok createProduct did not return product_id/sku_id for vtexProductId=${input.product.Id}`);
-        }
-        this.logger.info({
-            shopId,
-            ttsProductId: parsed.productId,
-            skuCount: Object.keys(parsed.skuIds).length,
-        }, 'Successfully created TikTok product');
-        return parsed;
-    }
-    async updateProduct(shopId, productId, input, options = {}) {
-        const accessToken = await this.tiktokShopService.getAccessToken(shopId);
-        const payload = await this.buildProductPayload(shopId, accessToken, input, {
-            ...options,
-            productId,
-        });
-        this.logger.info({
-            shopId,
-            productId,
-            vtexProductId: input.product.Id,
-            skuCount: input.skus.length,
-        }, 'Updating product on TikTok');
-        const { url, headers, body } = this.buildSignedOpenApiRequest(`/product/202309/products/${productId}`, accessToken, payload);
-        const response = await (0, rxjs_1.firstValueFrom)(this.http.put(url, body, { headers }));
-        const parsed = this.parseProductResponse(response.data);
-        const code = response.data?.code;
-        const message = response.data?.message;
-        if (code !== undefined && code !== 0) {
-            throw this.buildTikTokError('updateProduct', code, message, response.data);
-        }
-        if (!parsed.productId || !Object.keys(parsed.skuIds).length) {
-            this.logger.warn({
+        return this.withTokenRetry(shopId, async (accessToken) => {
+            const payload = await this.buildProductPayload(shopId, accessToken, input, options);
+            this.logger.info({
                 shopId,
-                productId,
                 vtexProductId: input.product.Id,
-                raw: response.data,
-            }, 'TikTok updateProduct did not return product_id/sku_id, keeping existing mapping');
-        }
-        else {
+                skuCount: input.skus.length,
+            }, 'Creating product on TikTok');
+            const { url, headers, body } = this.buildSignedOpenApiRequest('/product/202309/products', accessToken, payload);
+            const response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, body, { headers }));
+            const parsed = this.parseProductResponse(response.data);
+            const code = response.data?.code;
+            const message = response.data?.message;
+            if (code !== undefined && code !== 0) {
+                throw this.buildTikTokError('createProduct', code, message, response.data);
+            }
+            if (!parsed.productId || !Object.keys(parsed.skuIds).length) {
+                throw new Error(`TikTok createProduct did not return product_id/sku_id for vtexProductId=${input.product.Id}`);
+            }
             this.logger.info({
                 shopId,
                 ttsProductId: parsed.productId,
                 skuCount: Object.keys(parsed.skuIds).length,
-            }, 'Successfully updated TikTok product');
-        }
-        return parsed;
+            }, 'Successfully created TikTok product');
+            return parsed;
+        });
+    }
+    async updateProduct(shopId, productId, input, options = {}) {
+        return this.withTokenRetry(shopId, async (accessToken) => {
+            const payload = await this.buildProductPayload(shopId, accessToken, input, {
+                ...options,
+                productId,
+            });
+            this.logger.info({
+                shopId,
+                productId,
+                vtexProductId: input.product.Id,
+                skuCount: input.skus.length,
+            }, 'Updating product on TikTok');
+            const { url, headers, body } = this.buildSignedOpenApiRequest(`/product/202309/products/${productId}`, accessToken, payload);
+            const response = await (0, rxjs_1.firstValueFrom)(this.http.put(url, body, { headers }));
+            const parsed = this.parseProductResponse(response.data);
+            const code = response.data?.code;
+            const message = response.data?.message;
+            if (code !== undefined && code !== 0) {
+                throw this.buildTikTokError('updateProduct', code, message, response.data);
+            }
+            if (!parsed.productId || !Object.keys(parsed.skuIds).length) {
+                this.logger.warn({
+                    shopId,
+                    productId,
+                    vtexProductId: input.product.Id,
+                    raw: response.data,
+                }, 'TikTok updateProduct did not return product_id/sku_id, keeping existing mapping');
+            }
+            else {
+                this.logger.info({
+                    shopId,
+                    ttsProductId: parsed.productId,
+                    skuCount: Object.keys(parsed.skuIds).length,
+                }, 'Successfully updated TikTok product');
+            }
+            return parsed;
+        });
     }
     async updateStock(shopId, _warehouseId, ttsSkuId, availableQuantity, ttsProductId) {
-        const accessToken = await this.tiktokShopService.getAccessToken(shopId);
-        const inventoryItem = {
-            warehouse_id: this.warehouseId,
-            quantity: Math.max(0, Math.floor(availableQuantity)),
-        };
-        const body = {
-            skus: [
-                {
-                    id: String(ttsSkuId),
-                    inventory: [inventoryItem],
-                },
-            ],
-        };
-        const { url, headers, body: signedBody } = this.buildSignedOpenApiRequest(`/product/202309/products/${ttsProductId}/inventory/update`, accessToken, body);
-        const response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, signedBody, { headers }));
-        const code = response.data?.code;
-        if (code !== undefined && code !== 0) {
-            const message = response.data?.message ?? 'Unknown';
-            throw new Error(`TikTok inventory update failed: code=${code} message=${message}`);
-        }
+        await this.withTokenRetry(shopId, async (accessToken) => {
+            const inventoryItem = {
+                warehouse_id: this.warehouseId,
+                quantity: Math.max(0, Math.floor(availableQuantity)),
+            };
+            const body = {
+                skus: [
+                    {
+                        id: String(ttsSkuId),
+                        inventory: [inventoryItem],
+                    },
+                ],
+            };
+            const { url, headers, body: signedBody } = this.buildSignedOpenApiRequest(`/product/202309/products/${ttsProductId}/inventory/update`, accessToken, body);
+            const response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, signedBody, { headers }));
+            const code = response.data?.code;
+            if (code !== undefined && code !== 0) {
+                const message = response.data?.message ?? 'Unknown';
+                throw new Error(`TikTok inventory update failed: code=${code} message=${message}`);
+            }
+        });
     }
     buildSignedOpenApiRequest(path, accessToken, body, options = {}) {
         const headers = {
@@ -234,6 +237,76 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         }
         return error;
     }
+    isExpiredError(err) {
+        const status = err?.response?.status;
+        const code = err?.response?.data?.code;
+        const message = err?.response?.data?.message;
+        return status === 401 || code === 105002 || message?.toString?.().includes('Expired credentials');
+    }
+    async withTokenRetry(shopId, fn) {
+        let token = await this.tiktokShopService.getAccessToken(shopId);
+        try {
+            return await fn(token);
+        }
+        catch (err) {
+            if (!this.isExpiredError(err)) {
+                throw err;
+            }
+            this.logger.warn({ shopId }, 'Access token expired, refreshing and retrying');
+            token = await this.tiktokShopService.refresh(shopId);
+            return fn(token);
+        }
+    }
+    async uploadImageWithToken(normalizedUrl, accessToken) {
+        let imageResponse;
+        try {
+            imageResponse = await (0, rxjs_1.firstValueFrom)(this.http.get(normalizedUrl, {
+                responseType: 'arraybuffer',
+            }));
+        }
+        catch (err) {
+            err.__stage = 'download';
+            err.__url = normalizedUrl;
+            throw err;
+        }
+        const buffer = Buffer.from(imageResponse.data);
+        const form = new FormData();
+        const filename = normalizedUrl.split('/').pop() || `image-${Date.now()}.jpg`;
+        form.append('data', buffer, {
+            filename,
+            contentType: 'image/jpeg',
+        });
+        form.append('use_case', 'MAIN_IMAGE');
+        const formHeaders = form.getHeaders();
+        const { url, headers } = (0, signer_1.buildSignedRequest)(this.openBase, '/product/202309/images/upload', this.appKey, this.appSecret, {
+            qs: {},
+            headers: {
+                ...formHeaders,
+                'x-tts-access-token': accessToken,
+                Authorization: `Bearer ${accessToken}`,
+            },
+            body: undefined,
+        });
+        let response;
+        try {
+            response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, form, { headers }));
+        }
+        catch (err) {
+            err.__stage = 'upload';
+            err.__url = url;
+            throw err;
+        }
+        const uri = response.data?.data?.uri ??
+            response.data?.data?.image?.uri ??
+            response.data?.uri ??
+            null;
+        if (!uri) {
+            throw new Error('TikTok image upload did not return a URI');
+        }
+        this.imageUriCache.set(normalizedUrl, uri);
+        this.logger.info({ imageUrl: normalizedUrl, uri }, 'Successfully uploaded image to TikTok');
+        return uri;
+    }
     buildSellerSku(skuInput) {
         const override = typeof skuInput.sellerSkuOverride === 'string'
             ? skuInput.sellerSkuOverride.trim()
@@ -292,7 +365,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
                 },
             ];
             const identifierCode = this.buildIdentifierCode(skuInput.sku);
-            const preparedImages = await this.prepareImages(shopId, accessToken, skuInput.images);
+            const preparedImages = await this.prepareImages(shopId, skuInput.images);
             for (const image of preparedImages) {
                 if (!mainImageUris.has(image.uri)) {
                     mainImageUris.set(image.uri, { uri: image.uri });
@@ -388,7 +461,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         }
         return this.cleanPayload(payload);
     }
-    async prepareImages(shopId, accessToken, images) {
+    async prepareImages(shopId, images) {
         if (!images.length)
             return [];
         const uris = [];
@@ -396,7 +469,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
             const downloadUrls = [image.url, image.url.split('?')[0]];
             let uploadedUri = null;
             for (const url of downloadUrls) {
-                uploadedUri = await this.ensureImageUri(shopId, accessToken, url);
+                uploadedUri = await this.ensureImageUri(shopId, url);
                 if (uploadedUri)
                     break;
             }
@@ -409,7 +482,7 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
         }
         return uris.map((uri) => ({ uri }));
     }
-    async ensureImageUri(_shopId, accessToken, imageUrl) {
+    async ensureImageUri(shopId, imageUrl) {
         const normalized = imageUrl?.trim();
         if (!normalized) {
             return null;
@@ -418,42 +491,20 @@ let TiktokProductClient = TiktokProductClient_1 = class TiktokProductClient {
             return this.imageUriCache.get(normalized) ?? null;
         }
         try {
-            const imageResponse = await (0, rxjs_1.firstValueFrom)(this.http.get(normalized, {
-                responseType: 'arraybuffer',
-            }));
-            const buffer = Buffer.from(imageResponse.data);
-            const form = new FormData();
-            const filename = normalized.split('/').pop() || `image-${Date.now()}.jpg`;
-            form.append('data', buffer, {
-                filename,
-                contentType: 'image/jpeg',
-            });
-            form.append('use_case', 'MAIN_IMAGE');
-            const formHeaders = form.getHeaders();
-            const { url, headers } = (0, signer_1.buildSignedRequest)(this.openBase, '/product/202309/images/upload', this.appKey, this.appSecret, {
-                qs: {},
-                headers: {
-                    ...formHeaders,
-                    'x-tts-access-token': accessToken,
-                    Authorization: `Bearer ${accessToken}`,
-                },
-                body: undefined,
-            });
-            const response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, form, { headers }));
-            const uri = response.data?.data?.uri ??
-                response.data?.data?.image?.uri ??
-                response.data?.uri ??
-                null;
-            if (!uri) {
-                throw new Error('TikTok image upload did not return a URI');
-            }
-            this.imageUriCache.set(normalized, uri);
-            this.logger.info({ imageUrl: normalized, uri }, 'Successfully uploaded image to TikTok');
+            const uri = await this.withTokenRetry(shopId, (token) => this.uploadImageWithToken(normalized, token));
             return uri;
         }
         catch (error) {
-            const errorPayload = error?.response?.data;
-            this.logger.error({ err: error, errorPayload, imageUrl: normalized }, 'Failed to upload image to TikTok');
+            const response = error?.response;
+            const errorPayload = response?.data;
+            const meta = {
+                stage: error?.__stage,
+                url: error?.__url ?? response?.config?.url,
+                method: response?.config?.method,
+                status: response?.status,
+                statusText: response?.statusText,
+            };
+            this.logger.error({ err: error, errorPayload, imageUrl: normalized, meta }, 'Failed to upload image to TikTok');
             return null;
         }
     }

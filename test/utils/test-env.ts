@@ -39,7 +39,7 @@ export const ensureTestEnv = () => {
   process.env.VTEX_APP_KEY = process.env.VTEX_APP_KEY ?? 'key';
   process.env.VTEX_APP_TOKEN = process.env.VTEX_APP_TOKEN ?? 'token';
   process.env.PUBLIC_BASE_URL =
-    process.env.PUBLIC_BASE_URL ?? 'https://ttsscoremedia.com.br';
+    process.env.PUBLIC_BASE_URL ?? 'https://tts.scoremedia.com.br';
   process.env.TTS_REDIRECT_PATH =
     process.env.TTS_REDIRECT_PATH ?? '/oauth/tiktokshop/callback';
   process.env.MIDDLEWARE_API_KEY = process.env.MIDDLEWARE_API_KEY ?? 'internal-key';

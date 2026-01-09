@@ -45,37 +45,58 @@ export class TiktokOrderClient {
     payload?: unknown,
     params?: Record<string, string>,
   ) {
-    const token = await this.tiktokShopService.getAccessToken(shopId);
+    return this.withTokenRetry(shopId, async (token) => {
+      // Ensure base URL doesn't have trailing slash and path starts with slash
+      const baseUrl = this.openBase.replace(/\/$/, '');
+      const cleanPath = path.startsWith('/') ? path : `/${path}`;
 
-    // Ensure base URL doesn't have trailing slash and path starts with slash
-    const baseUrl = this.openBase.replace(/\/$/, '');
-    const cleanPath = path.startsWith('/') ? path : `/${path}`;
+      const { url, headers, body } = buildSignedRequest(
+        baseUrl,
+        cleanPath,
+        this.appKey,
+        this.appSecret,
+        {
+          qs: {
+            shop_cipher: this.shopCipher,
+            shop_id: shopId,
+            ...params,
+          },
+          headers: {
+            'x-tts-access-token': token,
+          },
+          body: payload,
+        }
+      );
 
-    const { url, headers, body } = buildSignedRequest(
-      baseUrl,
-      cleanPath,
-      this.appKey,
-      this.appSecret,
-      {
-        qs: {
-          shop_cipher: this.shopCipher,
-          shop_id: shopId,
-          ...params,
-        },
-        headers: {
-          'x-tts-access-token': token,
-        },
-        body: payload,
+      // buildSignedRequest returns the full URL with query string (including sign, timestamp, app_key)
+      // So we should NOT pass params to axios again, otherwise they will be duplicated.
+
+      if (method === 'get') {
+        return firstValueFrom(this.http.get(url, { headers }));
       }
-    );
 
-    // buildSignedRequest returns the full URL with query string (including sign, timestamp, app_key)
-    // So we should NOT pass params to axios again, otherwise they will be duplicated.
+      return firstValueFrom(this.http.post(url, body, { headers }));
+    });
+  }
 
-    if (method === 'get') {
-      return firstValueFrom(this.http.get(url, { headers }));
+  private isExpiredError(err: any): boolean {
+    const status = err?.response?.status;
+    const code = err?.response?.data?.code;
+    const message = err?.response?.data?.message;
+    return status === 401 || code === 105002 || message?.toString?.().includes('Expired credentials');
+  }
+
+  private async withTokenRetry<T>(shopId: string, fn: (token: string) => Promise<T>): Promise<T> {
+    let token = await this.tiktokShopService.getAccessToken(shopId);
+    try {
+      return await fn(token);
+    } catch (err) {
+      if (!this.isExpiredError(err)) {
+        throw err;
+      }
+      // refresh and retry once
+      token = await this.tiktokShopService.refresh(shopId);
+      return fn(token);
     }
-
-    return firstValueFrom(this.http.post(url, body, { headers }));
   }
 }

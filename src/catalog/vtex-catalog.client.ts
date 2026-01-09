@@ -264,7 +264,7 @@ export class VtexCatalogClient {
   }
 
   async getPrice(skuId: string): Promise<number> {
-    const url = `${this.baseUrl()}/pricing/prices/${skuId}`;
+    const url = `${this.pricingBaseUrl()}/pricing/prices/${skuId}`;
     const { data } = await firstValueFrom(
       this.http.get<{ basePrice: number }>(url, { headers: this.defaultHeaders() }),
     );
@@ -272,7 +272,7 @@ export class VtexCatalogClient {
   }
 
   async setPrice(skuId: string, price: number): Promise<void> {
-    const url = `${this.baseUrl()}/pricing/prices/${skuId}`;
+    const url = `${this.pricingBaseUrl()}/pricing/prices/${skuId}`;
     await firstValueFrom(
       this.http.put(
         url,
@@ -377,6 +377,21 @@ export class VtexCatalogClient {
       ? this.environment
       : `${this.environment}.com`;
     return `https://${this.account}.${suffix}/api`;
+  }
+
+  /**
+   * Pricing API usa host api.vtex.com/{account}/..., sem o padrão account.environment.
+   * Não usamos domainOverride geral; só aplicamos override específico (VTEX_PRICING_DOMAIN) se informado.
+   */
+  private pricingBaseUrl(): string {
+    const pricingOverride = this.configService.get<string>('VTEX_PRICING_DOMAIN', { infer: true });
+    if (pricingOverride) {
+      const domain = pricingOverride.startsWith('http')
+        ? pricingOverride
+        : `https://${pricingOverride}`;
+      return domain.replace(/\/+$/, '');
+    }
+    return `https://api.vtex.com/${this.account}`;
   }
 
   private defaultHeaders() {

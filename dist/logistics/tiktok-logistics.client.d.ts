@@ -11,4 +11,6 @@ export declare class TiktokLogisticsClient {
     getOrCreateShippingDocument(shopId: string, orderId: string): Promise<import("axios").AxiosResponse<any, any, {}>>;
     getShippingDocument(shopId: string, orderId: string): Promise<import("axios").AxiosResponse<any, any, {}>>;
     private request;
+    private isExpiredError;
+    private withTokenRetry;
 }

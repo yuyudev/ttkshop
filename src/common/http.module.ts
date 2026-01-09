@@ -71,7 +71,20 @@ class HttpClientConfigurator implements OnModuleInit {
           url: error.config?.url,
           method: error.config?.method,
         };
-        this.logger.error({ err: safeError }, 'HTTP request failed');
+        const headers = this.sanitizeHeaders(error.config?.headers as Record<string, any>);
+        this.logger.error(
+          {
+            err: safeError,
+            request: {
+              method: error.config?.method,
+              url: error.config?.url,
+              headers,
+              params: (error.config as any)?.params,
+              data: (error.config as any)?.data,
+            },
+          },
+          'HTTP request failed',
+        );
 
         if (!config || retryCount >= this.maxRetries || !this.isRetriable(error)) {
           throw error;
@@ -89,6 +102,44 @@ class HttpClientConfigurator implements OnModuleInit {
     const base = 250;
     const max = 2000;
     return Math.min(base * 2 ** (attempt - 1), max);
+  }
+
+  private sanitizeHeaders(raw: Record<string, any>): Record<string, string> {
+    const masked: Record<string, string> = {};
+    const sensitiveKeys = [
+      'authorization',
+      'x-tts-access-token',
+      'x-vtex-api-apptoken',
+      'x-vtex-api-appkey',
+      'x-api-key',
+      'app-token',
+      'appkey',
+      'apptoken',
+      'token',
+    ];
+
+    const maskValue = (value: unknown): string => {
+      if (typeof value !== 'string') {
+        return String(value ?? '');
+      }
+      if (value.length <= 8) {
+        return '***';
+      }
+      return `${value.slice(0, 3)}***${value.slice(-2)}`;
+    };
+
+    Object.entries(raw || {}).forEach(([key, value]) => {
+      const lowered = key.toLowerCase();
+      if (sensitiveKeys.some((candidate) => lowered.includes(candidate))) {
+        masked[key] = maskValue(
+          Array.isArray(value) ? value.join(',') : (value as any),
+        );
+        return;
+      }
+      masked[key] = Array.isArray(value) ? value.join(',') : String(value);
+    });
+
+    return masked;
   }
 
   private isRetriable(error: AxiosError): boolean {

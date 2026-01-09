@@ -34,17 +34,38 @@ export class TiktokLogisticsClient {
     path: string,
     payload?: unknown,
   ) {
-    const token = await this.tiktokShopService.getAccessToken(shopId);
-    const url = `${this.servicesBase}${path}`;
-    const headers = {
-      Authorization: `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    };
+    return this.withTokenRetry(shopId, async (token) => {
+      const url = `${this.servicesBase}${path}`;
+      const headers = {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      };
 
-    if (method === 'get') {
-      return firstValueFrom(this.http.get(url, { headers }));
+      if (method === 'get') {
+        return firstValueFrom(this.http.get(url, { headers }));
+      }
+
+      return firstValueFrom(this.http.post(url, payload, { headers }));
+    });
+  }
+
+  private isExpiredError(err: any): boolean {
+    const status = err?.response?.status;
+    const code = err?.response?.data?.code;
+    const message = err?.response?.data?.message;
+    return status === 401 || code === 105002 || message?.toString?.().includes('Expired credentials');
+  }
+
+  private async withTokenRetry<T>(shopId: string, fn: (token: string) => Promise<T>): Promise<T> {
+    let token = await this.tiktokShopService.getAccessToken(shopId);
+    try {
+      return await fn(token);
+    } catch (err) {
+      if (!this.isExpiredError(err)) {
+        throw err;
+      }
+      token = await this.tiktokShopService.refresh(shopId);
+      return fn(token);
     }
-
-    return firstValueFrom(this.http.post(url, payload, { headers }));
   }
 }

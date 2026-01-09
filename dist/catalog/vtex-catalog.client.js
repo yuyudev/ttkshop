@@ -149,12 +149,12 @@ let VtexCatalogClient = class VtexCatalogClient {
         return data;
     }
     async getPrice(skuId) {
-        const url = `${this.baseUrl()}/pricing/prices/${skuId}`;
+        const url = `${this.pricingBaseUrl()}/pricing/prices/${skuId}`;
         const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.defaultHeaders() }));
         return data.basePrice;
     }
     async setPrice(skuId, price) {
-        const url = `${this.baseUrl()}/pricing/prices/${skuId}`;
+        const url = `${this.pricingBaseUrl()}/pricing/prices/${skuId}`;
         await (0, rxjs_1.firstValueFrom)(this.http.put(url, {
             listPrice: price,
             basePrice: price,
@@ -232,6 +232,16 @@ let VtexCatalogClient = class VtexCatalogClient {
             ? this.environment
             : `${this.environment}.com`;
         return `https://${this.account}.${suffix}/api`;
+    }
+    pricingBaseUrl() {
+        const pricingOverride = this.configService.get('VTEX_PRICING_DOMAIN', { infer: true });
+        if (pricingOverride) {
+            const domain = pricingOverride.startsWith('http')
+                ? pricingOverride
+                : `https://${pricingOverride}`;
+            return domain.replace(/\/+$/, '');
+        }
+        return `https://api.vtex.com/${this.account}`;
     }
     defaultHeaders() {
         const appKey = this.configService.getOrThrow('VTEX_APP_KEY', { infer: true });
