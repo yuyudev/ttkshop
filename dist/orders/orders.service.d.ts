@@ -13,7 +13,7 @@ export declare class OrdersService {
     private readonly logisticsService;
     private readonly logger;
     constructor(tiktokClient: TiktokOrderClient, vtexClient: VtexOrdersClient, idempotency: IdempotencyService, prisma: PrismaService, logisticsService: LogisticsService, logger: PinoLogger);
-    handleWebhook(payload: OrderWebhookDto): Promise<"processed" | "skipped">;
+    handleWebhook(payload: OrderWebhookDto): Promise<"skipped" | "processed">;
     getLabel(orderId: string): Promise<{
         orderId: string;
         labelUrl: string;
@@ -24,4 +24,18 @@ export declare class OrdersService {
         labelUrl?: undefined;
     }>;
     private buildVtexOrderPayload;
+    private logOrderSnapshot;
+    private resolveRecipientAddress;
+    private isAddressLike;
+    private extractPostalCandidates;
+    private resolveDocument;
+    private extractDocumentCandidates;
+    private resolveBuyerProfile;
+    private resolveBuyerPhone;
+    private splitName;
+    private generateCpfFromSeed;
+    private digitsFromSeed;
+    private computeCpfDigit;
+    private isValidCpf;
+    private isValidCnpj;
 }
