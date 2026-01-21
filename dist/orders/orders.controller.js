@@ -22,7 +22,19 @@ let OrdersController = class OrdersController {
         this.ordersService = ordersService;
     }
     async handleWebhook(payload) {
-        const status = await this.ordersService.handleWebhook(payload);
+        const data = payload?.data;
+        if (!data || !data.order_id) {
+            return { status: 'ignored' };
+        }
+        const parser = new dto_1.ZodValidationPipe(dto_1.orderWebhookSchema);
+        let orderPayload;
+        try {
+            orderPayload = parser.transform(payload);
+        }
+        catch (error) {
+            throw new common_1.BadRequestException(error?.response ?? 'Invalid TikTok order webhook payload');
+        }
+        const status = await this.ordersService.handleWebhook(orderPayload);
         return { status };
     }
     async getLabel(orderId) {
@@ -32,7 +44,8 @@ let OrdersController = class OrdersController {
 exports.OrdersController = OrdersController;
 __decorate([
     (0, common_1.Post)('webhooks/tiktok/orders'),
-    __param(0, (0, common_1.Body)(new dto_1.ZodValidationPipe(dto_1.orderWebhookSchema))),
+    (0, common_1.HttpCode)(200),
+    __param(0, (0, common_1.Body)(new dto_1.ZodValidationPipe(dto_1.tiktokWebhookSchema))),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", Promise)

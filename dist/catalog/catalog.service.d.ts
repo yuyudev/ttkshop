@@ -23,7 +23,17 @@ export declare class CatalogService {
         errors: Record<string, string>;
     }>;
     private syncProductBySku;
-    syncProduct(shopId: string, productId: string): Promise<{
+    syncProduct(shopId: string, productId: string, options?: {
+        allowZeroStock?: boolean;
+    }): Promise<{
+        processedSkus: number;
+        syncedSkus: number;
+        errors: Record<string, string>;
+        budgetExceeded?: boolean;
+    }>;
+    syncProductBySkuId(shopId: string, vtexSkuId: string, options?: {
+        allowZeroStock?: boolean;
+    }): Promise<{
         processedSkus: number;
         syncedSkus: number;
         errors: Record<string, string>;

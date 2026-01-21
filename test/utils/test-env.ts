@@ -38,6 +38,9 @@ export const ensureTestEnv = () => {
   process.env.VTEX_ENVIRONMENT = process.env.VTEX_ENVIRONMENT ?? 'vtexcommercestable';
   process.env.VTEX_APP_KEY = process.env.VTEX_APP_KEY ?? 'key';
   process.env.VTEX_APP_TOKEN = process.env.VTEX_APP_TOKEN ?? 'token';
+  process.env.VTEX_AFFILIATE_ID = process.env.VTEX_AFFILIATE_ID ?? 'TTK';
+  process.env.VTEX_WAREHOUSE_ID = process.env.VTEX_WAREHOUSE_ID ?? '1_1';
+  process.env.VTEX_WEBHOOK_TOKEN = process.env.VTEX_WEBHOOK_TOKEN ?? 'vtex-webhook-token';
   process.env.PUBLIC_BASE_URL =
     process.env.PUBLIC_BASE_URL ?? 'https://tts.scoremedia.com.br';
   process.env.TTS_REDIRECT_PATH =

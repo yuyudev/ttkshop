@@ -63,6 +63,23 @@ export declare const orderWebhookSchema: z.ZodObject<{
     timestamp: z.ZodOptional<z.ZodNumber>;
 }, z.ZodTypeAny, "passthrough">>;
 export type OrderWebhookDto = z.infer<typeof orderWebhookSchema>;
+export declare const tiktokWebhookSchema: z.ZodObject<{
+    type: z.ZodNumber;
+    shop_id: z.ZodOptional<z.ZodString>;
+    data: z.ZodOptional<z.ZodUnknown>;
+    timestamp: z.ZodOptional<z.ZodNumber>;
+}, "passthrough", z.ZodTypeAny, z.objectOutputType<{
+    type: z.ZodNumber;
+    shop_id: z.ZodOptional<z.ZodString>;
+    data: z.ZodOptional<z.ZodUnknown>;
+    timestamp: z.ZodOptional<z.ZodNumber>;
+}, z.ZodTypeAny, "passthrough">, z.objectInputType<{
+    type: z.ZodNumber;
+    shop_id: z.ZodOptional<z.ZodString>;
+    data: z.ZodOptional<z.ZodUnknown>;
+    timestamp: z.ZodOptional<z.ZodNumber>;
+}, z.ZodTypeAny, "passthrough">>;
+export type TiktokWebhookDto = z.infer<typeof tiktokWebhookSchema>;
 export declare const tikTokCallbackQuerySchema: z.ZodEffects<z.ZodObject<{
     auth_code: z.ZodOptional<z.ZodString>;
     code: z.ZodOptional<z.ZodString>;

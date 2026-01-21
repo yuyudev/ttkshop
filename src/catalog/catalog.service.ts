@@ -114,6 +114,7 @@ export class CatalogService {
     processedSkuIds: Set<string>,
     remainingBudget: number,
     allowBudgetOverflow: boolean,
+    allowZeroStock = false,
   ): Promise<{
     processedSkus: number;
     syncedSkus: number;
@@ -287,7 +288,7 @@ export class CatalogService {
         (skuInput) => Number(skuInput.quantity ?? 0) > 0,
       );
 
-      if (!hasAvailableStock) {
+      if (!allowZeroStock && !hasAvailableStock) {
         for (const skuInput of skuInputs) {
           processedSkuIds.add(skuInput.vtexSkuId);
         }
@@ -529,7 +530,11 @@ export class CatalogService {
     }
   }
 
-  async syncProduct(shopId: string, productId: string) {
+  async syncProduct(
+    shopId: string,
+    productId: string,
+    options: { allowZeroStock?: boolean } = {},
+  ) {
     const skuIds = await this.getSkuIdsForProduct(productId);
     if (!skuIds.length) {
       throw new Error(`No VTEX SKUs found for product ${productId}`);
@@ -540,6 +545,23 @@ export class CatalogService {
       new Set<string>(),
       this.MAX_SKUS_PER_RUN,
       true,
+      options.allowZeroStock ?? false,
+    );
+    return result;
+  }
+
+  async syncProductBySkuId(
+    shopId: string,
+    vtexSkuId: string,
+    options: { allowZeroStock?: boolean } = {},
+  ) {
+    const result = await this.syncProductBySku(
+      shopId,
+      vtexSkuId,
+      new Set<string>(),
+      this.MAX_SKUS_PER_RUN,
+      true,
+      options.allowZeroStock ?? false,
     );
     return result;
   }

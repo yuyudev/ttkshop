@@ -28,9 +28,13 @@ export class VtexOrdersClient {
     const url = `${this.baseUrl()}/fulfillment/pvt/orders`;
     // Add sales channel query param (default to 1 or config)
     const sc = this.configService.get<string>('VTEX_SALES_CHANNEL') ?? '1';
+    const affiliateId = this.configService.get<string>('VTEX_AFFILIATE_ID', { infer: true });
     return firstValueFrom(this.http.post(url, payload, {
       headers: this.headers(),
-      params: { sc }
+      params: {
+        sc,
+        ...(affiliateId ? { affiliateId } : {}),
+      },
     }));
   }
 
@@ -42,6 +46,8 @@ export class VtexOrdersClient {
   async simulateOrder(items: any[], postalCode: string, country: string) {
     // Correct endpoint for simulation: /api/checkout/pub/orderForms/simulation
     const url = `${this.baseUrl()}/checkout/pub/orderForms/simulation`;
+    const sc = this.configService.get<string>('VTEX_SALES_CHANNEL') ?? '1';
+    const affiliateId = this.configService.get<string>('VTEX_AFFILIATE_ID', { infer: true });
     const payload = {
       items: items.map(item => ({
         id: item.id,
@@ -52,7 +58,13 @@ export class VtexOrdersClient {
       country,
     };
     this.logger.info({ url, payload }, 'Calling VTEX simulation endpoint');
-    return firstValueFrom(this.http.post(url, payload, { headers: this.headers() }));
+    return firstValueFrom(this.http.post(url, payload, {
+      headers: this.headers(),
+      params: {
+        sc,
+        ...(affiliateId ? { affiliateId } : {}),
+      },
+    }));
   }
 
   async updateTracking(orderId: string, invoiceData: any) {

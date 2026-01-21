@@ -65,7 +65,9 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     this.logger.info({ orderId, status: orderDetails?.status }, 'Skipping order - not ready for fulfillment');
                     return;
                 }
-                const vtexPayload = await this.buildVtexOrderPayload(orderDetails, shopId);
+                let vtexPayload = await this.buildVtexOrderPayload(orderDetails, shopId, {
+                    priceMode: 'selling',
+                });
                 let vtexResponse;
                 try {
                     vtexResponse = await this.vtexClient.createOrder(vtexPayload);
@@ -93,6 +95,39 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     this.logger.info({ orderId, vtexOrderId }, 'TikTok order processed successfully');
                 }
                 catch (vtexError) {
+                    if (this.isVtexPaymentMismatch(vtexError)) {
+                        this.logger.warn({
+                            orderId,
+                            errorResponse: vtexError?.response?.data,
+                        }, 'VTEX rejected payment totals; retrying with full price mode');
+                        vtexPayload = await this.buildVtexOrderPayload(orderDetails, shopId, {
+                            priceMode: 'price',
+                        });
+                        vtexResponse = await this.vtexClient.createOrder(vtexPayload);
+                        const responseData = vtexResponse.data;
+                        const firstOrder = Array.isArray(responseData) ? responseData[0] : responseData;
+                        const vtexOrderId = firstOrder?.orderId ?? firstOrder?.id ?? null;
+                        this.logger.info({ orderId, vtexOrderId }, 'Created VTEX order successfully after price fallback');
+                        await this.prisma.orderMap.upsert({
+                            where: { ttsOrderId: orderId },
+                            update: {
+                                vtexOrderId,
+                                status: 'imported',
+                                lastError: null,
+                                shopId,
+                            },
+                            create: {
+                                ttsOrderId: orderId,
+                                shopId,
+                                vtexOrderId,
+                                status: 'imported',
+                            },
+                        });
+                        this.logger.info({ orderId, orderValue: orderDetails?.payment?.total }, 'Initiating label generation');
+                        await this.logisticsService.generateLabel(shopId, orderId, orderDetails?.payment?.total ?? 0);
+                        this.logger.info({ orderId, vtexOrderId }, 'TikTok order processed successfully after price fallback');
+                        return;
+                    }
                     this.logger.error({
                         err: vtexError,
                         orderId,
@@ -133,7 +168,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
     async getLabel(orderId) {
         return this.logisticsService.getLabel(orderId);
     }
-    async buildVtexOrderPayload(order, shopId) {
+    async buildVtexOrderPayload(order, shopId, options) {
         const items = Array.isArray(order?.line_items)
             ? order.line_items
             : Array.isArray(order?.items)
@@ -267,7 +302,8 @@ let OrdersService = OrdersService_1 = class OrdersService {
         };
         let selectedSla = null;
         let shippingEstimate = '10d';
-        let price = 0;
+        let shippingTotalCents = 0;
+        let logisticsInfoPayload = [];
         let simulation = null;
         try {
             this.logger.info({
@@ -278,16 +314,58 @@ let OrdersService = OrdersService_1 = class OrdersService {
             }, 'Simulating order with VTEX');
             simulation = await this.vtexClient.simulateOrder(mappedItems, address.postalCode, address.country);
             this.logger.info({ simulationResult: simulation.data }, 'VTEX Simulation Result');
-            const logisticsInfo = simulation.data?.logisticsInfo?.[0];
-            const availableSla = logisticsInfo?.slas?.[0];
-            if (availableSla) {
-                selectedSla = availableSla.id;
-                shippingEstimate = availableSla.shippingEstimate;
-                price = availableSla.price;
-                this.logger.info({ orderId: order?.id ?? order?.order_id, selectedSla, shippingEstimate, price }, 'Selected SLA from simulation');
+            const logisticsEntries = Array.isArray(simulation.data?.logisticsInfo)
+                ? simulation.data.logisticsInfo
+                : [];
+            const defaultSlaId = logisticsEntries[0]?.slas?.[0]?.id ?? null;
+            if (defaultSlaId) {
+                selectedSla = defaultSlaId;
+            }
+            logisticsInfoPayload = [];
+            shippingTotalCents = 0;
+            logisticsEntries.forEach((entry, index) => {
+                const slas = Array.isArray(entry?.slas) ? entry.slas : [];
+                if (!slas.length) {
+                    return;
+                }
+                let sla = (selectedSla ? slas.find((s) => s?.id === selectedSla) : null) ??
+                    slas[0];
+                if (!sla) {
+                    return;
+                }
+                if (!selectedSla) {
+                    selectedSla = sla.id;
+                }
+                if (sla.id !== selectedSla) {
+                    this.logger.warn({
+                        orderId: order?.id ?? order?.order_id,
+                        itemIndex: index,
+                        expectedSla: selectedSla,
+                        resolvedSla: sla.id,
+                    }, 'Item did not include selected SLA; using fallback SLA');
+                }
+                const slaPrice = Number(sla.price) || 0;
+                shippingTotalCents += slaPrice;
+                shippingEstimate = sla.shippingEstimate ?? shippingEstimate;
+                logisticsInfoPayload.push({
+                    itemIndex: index,
+                    selectedSla: sla.id,
+                    price: slaPrice,
+                    shippingEstimate: sla.shippingEstimate ?? shippingEstimate,
+                    lockTTL: sla.lockTTL ?? '1bd',
+                });
+            });
+            if (selectedSla) {
+                this.logger.info({
+                    orderId: order?.id ?? order?.order_id,
+                    selectedSla,
+                    shippingEstimate,
+                    shippingTotalCents,
+                    logisticsCount: logisticsInfoPayload.length,
+                }, 'Selected SLA from simulation');
             }
             else {
-                this.logger.warn({ orderId: order?.id ?? order?.order_id, logisticsInfo }, 'No SLA found in simulation');
+                this.logger.warn({ orderId: order?.id ?? order?.order_id, logisticsEntries }, 'No SLA found in simulation');
             }
         }
         catch (e) {
@@ -301,20 +379,23 @@ let OrdersService = OrdersService_1 = class OrdersService {
         const simulationItems = Array.isArray(simulation?.data?.items)
             ? simulation.data.items
             : [];
-        const priceBySkuId = new Map();
-        for (const item of simulationItems) {
-            const id = item?.id ?? item?.itemId ?? item?.skuId;
-            const sellingPrice = Number(item?.sellingPrice ?? item?.price);
-            if (id && Number.isFinite(sellingPrice)) {
-                priceBySkuId.set(String(id), sellingPrice);
-            }
-        }
-        const pricedItems = mappedItems.map((item) => ({
-            ...item,
-            price: priceBySkuId.get(item.id) ?? item.price,
-        }));
-        const itemsTotalCents = pricedItems.reduce((sum, item) => sum + (Number(item.price) || 0) * item.quantity, 0);
-        const shippingTotalCents = Number.isFinite(price) && price > 0 ? price : 0;
+        const pricingBySkuId = this.resolveSimulationPricing(simulationItems, {
+            priceMode: options?.priceMode ?? 'selling',
+        });
+        const pricedItems = mappedItems.map((item) => {
+            const pricing = pricingBySkuId.get(String(item.id));
+            const priceTags = pricing?.priceTags;
+            return {
+                ...item,
+                price: pricing?.basePrice ?? item.price,
+                ...(priceTags && priceTags.length ? { priceTags } : {}),
+            };
+        });
+        const itemsTotalCents = pricedItems.reduce((sum, item) => {
+            const pricing = pricingBySkuId.get(String(item.id));
+            const unitTotal = pricing?.finalPrice ?? item.price;
+            return sum + (Number(unitTotal) || 0) * item.quantity;
+        }, 0);
         const paymentTotalCents = itemsTotalCents + shippingTotalCents;
         if (paymentTotalCents <= 0) {
             this.logger.warn({
@@ -323,13 +404,15 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 shippingTotalCents,
             }, 'Computed payment total is zero or invalid; check pricing and simulation data');
         }
-        const logisticsInfo = pricedItems.map((_, index) => ({
-            itemIndex: index,
-            selectedSla,
-            price: index === 0 ? shippingTotalCents : 0,
-            shippingEstimate,
-            lockTTL: '1bd',
-        }));
+        const logisticsInfo = logisticsInfoPayload.length > 0
+            ? logisticsInfoPayload
+            : pricedItems.map((_, index) => ({
+                itemIndex: index,
+                selectedSla: selectedSla ?? 'STANDARD',
+                price: index === 0 ? shippingTotalCents : 0,
+                shippingEstimate,
+                lockTTL: '1bd',
+            }));
         return [
             {
                 marketplaceOrderId: order?.id ?? order?.order_id,
@@ -359,6 +442,61 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 },
             }
         ];
+    }
+    resolveSimulationPricing(simulationItems, options) {
+        const pricingBySkuId = new Map();
+        for (const item of simulationItems) {
+            const id = item?.id ?? item?.itemId ?? item?.skuId;
+            if (!id)
+                continue;
+            const basePrice = Number(item?.price ?? item?.listPrice);
+            const sellingPrice = Number(item?.sellingPrice ??
+                item?.priceDefinition?.calculatedSellingPrice ??
+                item?.priceDefinition?.total);
+            const rawTags = Array.isArray(item?.priceTags) ? item.priceTags : [];
+            const priceTags = options.priceMode === 'selling' ? this.sanitizePriceTags(rawTags) : [];
+            const tagTotal = priceTags.reduce((sum, tag) => sum + (Number(tag.value) || 0), 0);
+            let finalPrice = basePrice;
+            if (options.priceMode === 'selling') {
+                if (Number.isFinite(basePrice) && priceTags.length) {
+                    finalPrice = basePrice + tagTotal;
+                }
+                else if (Number.isFinite(sellingPrice) && sellingPrice > 0) {
+                    finalPrice = sellingPrice;
+                }
+            }
+            else if (Number.isFinite(basePrice) && basePrice > 0) {
+                finalPrice = basePrice;
+            }
+            else if (Number.isFinite(sellingPrice) && sellingPrice > 0) {
+                finalPrice = sellingPrice;
+            }
+            if (Number.isFinite(basePrice) && basePrice > 0) {
+                pricingBySkuId.set(String(id), {
+                    basePrice,
+                    finalPrice: Number.isFinite(finalPrice) ? finalPrice : basePrice,
+                    ...(priceTags.length ? { priceTags } : {}),
+                });
+            }
+        }
+        return pricingBySkuId;
+    }
+    sanitizePriceTags(tags) {
+        return tags
+            .map((tag) => ({
+            name: String(tag?.name ?? ''),
+            value: Number(tag?.value ?? 0),
+            isPercentual: typeof tag?.isPercentual === 'boolean' ? tag.isPercentual : undefined,
+            identifier: tag?.identifier ?? undefined,
+            rawValue: tag?.rawValue !== undefined && tag?.rawValue !== null
+                ? Number(tag.rawValue)
+                : undefined,
+        }))
+            .filter((tag) => tag.name && Number.isFinite(tag.value));
+    }
+    isVtexPaymentMismatch(error) {
+        const code = error?.response?.data?.error?.code;
+        return code === 'FMT007';
     }
     logOrderSnapshot(order, orderId) {
         if (!order || typeof order !== 'object') {

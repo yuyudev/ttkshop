@@ -24,6 +24,9 @@ export declare class OrdersService {
         labelUrl?: undefined;
     }>;
     private buildVtexOrderPayload;
+    private resolveSimulationPricing;
+    private sanitizePriceTags;
+    private isVtexPaymentMismatch;
     private logOrderSnapshot;
     private resolveRecipientAddress;
     private isAddressLike;

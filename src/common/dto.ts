@@ -24,6 +24,15 @@ export const orderWebhookSchema = z.object({
 
 export type OrderWebhookDto = z.infer<typeof orderWebhookSchema>;
 
+export const tiktokWebhookSchema = z.object({
+  type: z.number(),
+  shop_id: z.string().optional(),
+  data: z.unknown().optional(),
+  timestamp: z.number().optional(),
+}).passthrough();
+
+export type TiktokWebhookDto = z.infer<typeof tiktokWebhookSchema>;
+
 export const tikTokCallbackQuerySchema = z
   .object({
     auth_code: z.string().optional(),

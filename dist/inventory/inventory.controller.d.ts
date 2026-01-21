@@ -1,31 +1,16 @@
+import { ConfigService } from '@nestjs/config';
 import { InventoryService } from './inventory.service';
 import { InventorySyncDto } from '../common/dto';
+import { AppConfig } from '../common/config';
 export declare class InventoryController {
     private readonly inventoryService;
-    constructor(inventoryService: InventoryService);
+    private readonly configService;
+    constructor(inventoryService: InventoryService, configService: ConfigService<AppConfig>);
     handleVtexWebhook(payload: any): Promise<{
         status: string;
-        reason: string;
-        results?: undefined;
-    } | {
+    }>;
+    handleVtexNotification(token: string, payload: any): Promise<{
         status: string;
-        results: {
-            shopId: string;
-            warehouseId: string;
-            count: number;
-            results: ({
-                skuId: string;
-                inventory: number;
-                status: string;
-                error?: undefined;
-            } | {
-                skuId: string;
-                status: string;
-                error: string;
-                inventory?: undefined;
-            })[];
-        }[];
-        reason?: undefined;
     }>;
     manualSync(shopId: string, payload: InventorySyncDto): Promise<{
         shopId: string;

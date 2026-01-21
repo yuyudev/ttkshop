@@ -14,16 +14,29 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.InventoryController = void 0;
 const common_1 = require("@nestjs/common");
+const config_1 = require("@nestjs/config");
 const swagger_1 = require("@nestjs/swagger");
 const auth_guard_1 = require("../auth/auth.guard");
 const inventory_service_1 = require("./inventory.service");
 const dto_1 = require("../common/dto");
 let InventoryController = class InventoryController {
-    constructor(inventoryService) {
+    constructor(inventoryService, configService) {
         this.inventoryService = inventoryService;
+        this.configService = configService;
     }
     async handleVtexWebhook(payload) {
-        return this.inventoryService.handleVtexWebhook(payload);
+        this.inventoryService.scheduleVtexInventory(payload);
+        return { status: 'accepted' };
+    }
+    async handleVtexNotification(token, payload) {
+        const expectedToken = this.configService.getOrThrow('VTEX_WEBHOOK_TOKEN', {
+            infer: true,
+        });
+        if (token !== expectedToken) {
+            throw new common_1.UnauthorizedException('Invalid VTEX webhook token');
+        }
+        this.inventoryService.scheduleVtexNotification(payload);
+        return { status: 'accepted' };
     }
     async manualSync(shopId, payload) {
         if (!shopId) {
@@ -36,11 +49,21 @@ exports.InventoryController = InventoryController;
 __decorate([
     (0, common_1.UseGuards)(auth_guard_1.ApiKeyAuthGuard),
     (0, common_1.Post)('webhooks/vtex/inventory'),
+    (0, common_1.HttpCode)(200),
     __param(0, (0, common_1.Body)()),
     __metadata("design:type", Function),
     __metadata("design:paramtypes", [Object]),
     __metadata("design:returntype", Promise)
 ], InventoryController.prototype, "handleVtexWebhook", null);
+__decorate([
+    (0, common_1.Post)('webhooks/vtex/notify/:token'),
+    (0, common_1.HttpCode)(200),
+    __param(0, (0, common_1.Param)('token')),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], InventoryController.prototype, "handleVtexNotification", null);
 __decorate([
     (0, common_1.UseGuards)(auth_guard_1.ApiKeyAuthGuard),
     (0, common_1.Post)('internal/inventory/sync'),
@@ -58,6 +81,7 @@ exports.InventoryController = InventoryController = __decorate([
         description: 'Chave interna do middleware para autorizar o acesso às rotas',
     }),
     (0, common_1.Controller)(),
-    __metadata("design:paramtypes", [inventory_service_1.InventoryService])
+    __metadata("design:paramtypes", [inventory_service_1.InventoryService,
+        config_1.ConfigService])
 ], InventoryController);
 //# sourceMappingURL=inventory.controller.js.map

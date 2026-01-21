@@ -70,7 +70,7 @@ let CatalogService = CatalogService_1 = class CatalogService {
         const remaining = Math.max(skuSummaries.length - processedSkuIds.size, 0);
         return { processed, synced, failed: processed - synced, remaining, errors };
     }
-    async syncProductBySku(shopId, vtexSkuId, processedSkuIds, remainingBudget, allowBudgetOverflow) {
+    async syncProductBySku(shopId, vtexSkuId, processedSkuIds, remainingBudget, allowBudgetOverflow, allowZeroStock = false) {
         const errors = {};
         let relatedSkuIds = [];
         let productId = null;
@@ -176,7 +176,7 @@ let CatalogService = CatalogService_1 = class CatalogService {
                 }
             }
             const hasAvailableStock = skuInputs.some((skuInput) => Number(skuInput.quantity ?? 0) > 0);
-            if (!hasAvailableStock) {
+            if (!allowZeroStock && !hasAvailableStock) {
                 for (const skuInput of skuInputs) {
                     processedSkuIds.add(skuInput.vtexSkuId);
                 }
@@ -355,12 +355,16 @@ let CatalogService = CatalogService_1 = class CatalogService {
             };
         }
     }
-    async syncProduct(shopId, productId) {
+    async syncProduct(shopId, productId, options = {}) {
         const skuIds = await this.getSkuIdsForProduct(productId);
         if (!skuIds.length) {
             throw new Error(`No VTEX SKUs found for product ${productId}`);
         }
-        const result = await this.syncProductBySku(shopId, skuIds[0], new Set(), this.MAX_SKUS_PER_RUN, true);
+        const result = await this.syncProductBySku(shopId, skuIds[0], new Set(), this.MAX_SKUS_PER_RUN, true, options.allowZeroStock ?? false);
+        return result;
+    }
+    async syncProductBySkuId(shopId, vtexSkuId, options = {}) {
+        const result = await this.syncProductBySku(shopId, vtexSkuId, new Set(), this.MAX_SKUS_PER_RUN, true, options.allowZeroStock ?? false);
         return result;
     }
     extractProductId(sku) {

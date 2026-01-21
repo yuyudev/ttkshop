@@ -56,6 +56,14 @@ VTEX_PAGE_LIMIT=20
 VTEX_FILE_PAGE_SIZE=50
 VTEX_APP_KEY=seu_vtex_app_key
 VTEX_APP_TOKEN=seu_vtex_app_token
+VTEX_AFFILIATE_ID=seu_affiliate_id
+VTEX_MARKETPLACE_SERVICES_ENDPOINT=https://seu-dominio
+VTEX_PAYMENT_SYSTEM_ID=201
+VTEX_PAYMENT_SYSTEM_NAME=TikTok Shop
+VTEX_PAYMENT_GROUP=custom201PaymentGroupPaymentGroup
+VTEX_PAYMENT_MERCHANT=TikTok SHop
+VTEX_WAREHOUSE_ID=1_1
+VTEX_WEBHOOK_TOKEN=seu_token_webhook
 
 PUBLIC_BASE_URL=https://tts.scoremedia.com.br
 TTS_REDIRECT_PATH=/oauth/tiktokshop/callback
@@ -107,6 +115,7 @@ docker-compose exec app npx prisma migrate deploy
 - `GET /docs` – Swagger (com basic auth em produção)
 - `GET /oauth/tiktokshop/callback` – callback OAuth TikTok Shop
 - `POST /webhooks/tiktok/orders` – webhook de pedidos
+- `POST /webhooks/vtex/notify/:token` – webhook VTEX (estoque/preço/catálogo)
 - Rotas internas (`x-api-key`):
   - `POST /internal/catalog/sync`
   - `POST /internal/inventory/sync`

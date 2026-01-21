@@ -9,7 +9,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
     if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(k, v);
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.ZodValidationPipe = exports.tikTokCallbackQuerySchema = exports.orderWebhookSchema = exports.inventorySyncSchema = exports.catalogSyncSchema = void 0;
+exports.ZodValidationPipe = exports.tikTokCallbackQuerySchema = exports.tiktokWebhookSchema = exports.orderWebhookSchema = exports.inventorySyncSchema = exports.catalogSyncSchema = void 0;
 const common_1 = require("@nestjs/common");
 const zod_1 = require("zod");
 exports.catalogSyncSchema = zod_1.z.object({
@@ -26,6 +26,12 @@ exports.orderWebhookSchema = zod_1.z.object({
         order_id: zod_1.z.string(),
         order_status: zod_1.z.string().optional(),
     }).passthrough(),
+    timestamp: zod_1.z.number().optional(),
+}).passthrough();
+exports.tiktokWebhookSchema = zod_1.z.object({
+    type: zod_1.z.number(),
+    shop_id: zod_1.z.string().optional(),
+    data: zod_1.z.unknown().optional(),
     timestamp: zod_1.z.number().optional(),
 }).passthrough();
 exports.tikTokCallbackQuerySchema = zod_1.z

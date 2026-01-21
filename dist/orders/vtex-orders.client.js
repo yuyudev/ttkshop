@@ -40,6 +40,8 @@ let VtexOrdersClient = VtexOrdersClient_1 = class VtexOrdersClient {
     }
     async simulateOrder(items, postalCode, country) {
         const url = `${this.baseUrl()}/checkout/pub/orderForms/simulation`;
+        const sc = this.configService.get('VTEX_SALES_CHANNEL') ?? '1';
+        const affiliateId = this.configService.get('VTEX_AFFILIATE_ID', { infer: true });
         const payload = {
             items: items.map(item => ({
                 id: item.id,
@@ -50,7 +52,13 @@ let VtexOrdersClient = VtexOrdersClient_1 = class VtexOrdersClient {
             country,
         };
         this.logger.info({ url, payload }, 'Calling VTEX simulation endpoint');
-        return (0, rxjs_1.firstValueFrom)(this.http.post(url, payload, { headers: this.headers() }));
+        return (0, rxjs_1.firstValueFrom)(this.http.post(url, payload, {
+            headers: this.headers(),
+            params: {
+                sc,
+                ...(affiliateId ? { affiliateId } : {}),
+            },
+        }));
     }
     async updateTracking(orderId, invoiceData) {
         const url = `${this.baseUrl()}/oms/pvt/orders/${orderId}/invoice`;
