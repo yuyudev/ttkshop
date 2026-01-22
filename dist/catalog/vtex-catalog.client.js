@@ -15,21 +15,20 @@ const common_1 = require("@nestjs/common");
 const nestjs_pino_1 = require("nestjs-pino");
 const config_1 = require("@nestjs/config");
 const rxjs_1 = require("rxjs");
+const shop_config_service_1 = require("../common/shop-config.service");
 let VtexCatalogClient = class VtexCatalogClient {
-    constructor(http, configService, logger) {
+    constructor(http, configService, shopConfigService, logger) {
         this.http = http;
         this.configService = configService;
+        this.shopConfigService = shopConfigService;
         this.logger = logger;
-        this.account = this.configService.getOrThrow('VTEX_ACCOUNT', { infer: true });
-        this.environment = this.configService.getOrThrow('VTEX_ENVIRONMENT', { infer: true });
-        this.domainOverride = this.configService.get('VTEX_DOMAIN', { infer: true });
     }
-    async listSkus(updatedFrom) {
+    async listSkus(shopId, updatedFrom) {
         const pageSize = Number(this.configService.get('VTEX_PAGE_SIZE', { infer: true })) || 50;
         const limit = Number(this.configService.get('VTEX_PAGE_LIMIT', { infer: true })) || 20;
         const results = [];
         for (let currentPage = 1; currentPage <= limit; currentPage++) {
-            const ids = await this.fetchSkuPage(currentPage, pageSize, updatedFrom);
+            const ids = await this.fetchSkuPage(shopId, currentPage, pageSize, updatedFrom);
             if (!ids.length) {
                 break;
             }
@@ -40,8 +39,9 @@ let VtexCatalogClient = class VtexCatalogClient {
         }
         return results.map((id) => ({ id: String(id), productId: String(id), name: '' }));
     }
-    async fetchSkuPage(page, pageSize, updatedFrom) {
-        const url = `${this.baseUrl()}/catalog_system/pvt/sku/stockkeepingunitids`;
+    async fetchSkuPage(shopId, page, pageSize, updatedFrom) {
+        const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+        const url = `${this.buildBaseUrl(vtexConfig)}/catalog_system/pvt/sku/stockkeepingunitids`;
         const params = {
             page: String(page),
             pagesize: String(pageSize),
@@ -52,7 +52,7 @@ let VtexCatalogClient = class VtexCatalogClient {
         try {
             const response = await (0, rxjs_1.firstValueFrom)(this.http.get(url, {
                 params,
-                headers: this.defaultHeaders(),
+                headers: this.buildDefaultHeaders(vtexConfig),
                 maxRedirects: 5,
             }));
             const body = response.data;
@@ -88,9 +88,10 @@ let VtexCatalogClient = class VtexCatalogClient {
             throw error;
         }
     }
-    async getSkuInventory(skuId, warehouseId) {
-        const url = `${this.baseUrl()}/logistics/pvt/inventory/items/${skuId}/warehouses/${warehouseId}`;
-        const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.defaultHeaders() }));
+    async getSkuInventory(shopId, skuId, warehouseId) {
+        const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+        const url = `${this.buildBaseUrl(vtexConfig)}/logistics/pvt/inventory/items/${skuId}/warehouses/${warehouseId}`;
+        const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.buildDefaultHeaders(vtexConfig) }));
         const parseQuantity = (value) => {
             if (value === null || value === undefined) {
                 return 0;
@@ -123,52 +124,60 @@ let VtexCatalogClient = class VtexCatalogClient {
         this.logger.warn({ skuId, warehouseId, body: data }, 'VTEX getSkuInventory returned unexpected payload; assuming zero quantity');
         return 0;
     }
-    async getSkuById(skuId) {
-        const url = `${this.baseUrl()}/catalog/pvt/stockkeepingunit/${skuId}`;
-        const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.defaultHeaders() }));
+    async getSkuById(shopId, skuId) {
+        const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+        const url = `${this.buildBaseUrl(vtexConfig)}/catalog/pvt/stockkeepingunit/${skuId}`;
+        const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.buildDefaultHeaders(vtexConfig) }));
         return data;
     }
-    async getProductWithSkus(productId) {
-        const url = `${this.baseUrl()}/catalog_system/pvt/sku/stockkeepingunitByProductId/${productId}`;
-        const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.defaultHeaders() }));
+    async getProductWithSkus(shopId, productId) {
+        const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+        const url = `${this.buildBaseUrl(vtexConfig)}/catalog_system/pvt/sku/stockkeepingunitByProductId/${productId}`;
+        const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.buildDefaultHeaders(vtexConfig) }));
         return data;
     }
-    async searchProductWithItems(productId) {
-        const url = `${this.baseUrl()}/catalog_system/pub/products/search/`;
+    async searchProductWithItems(shopId, productId) {
+        const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+        const url = `${this.buildBaseUrl(vtexConfig)}/catalog_system/pub/products/search/`;
         const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, {
-            headers: this.defaultHeaders(),
+            headers: this.buildDefaultHeaders(vtexConfig),
             params: {
                 fq: `productId:${productId}`,
             },
         }));
         return data;
     }
-    async getProductById(productId) {
-        const url = `${this.baseUrl()}/catalog/pvt/product/${productId}`;
-        const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.defaultHeaders() }));
+    async getProductById(shopId, productId) {
+        const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+        const url = `${this.buildBaseUrl(vtexConfig)}/catalog/pvt/product/${productId}`;
+        const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.buildDefaultHeaders(vtexConfig) }));
         return data;
     }
-    async getPrice(skuId) {
-        const url = `${this.pricingBaseUrl()}/pricing/prices/${skuId}`;
-        const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.defaultHeaders() }));
+    async getPrice(shopId, skuId) {
+        const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+        const url = `${this.buildPricingBaseUrl(vtexConfig)}/pricing/prices/${skuId}`;
+        const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, { headers: this.buildDefaultHeaders(vtexConfig) }));
         return data.basePrice;
     }
-    async setPrice(skuId, price) {
-        const url = `${this.pricingBaseUrl()}/pricing/prices/${skuId}`;
+    async setPrice(shopId, skuId, price) {
+        const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+        const url = `${this.buildPricingBaseUrl(vtexConfig)}/pricing/prices/${skuId}`;
         await (0, rxjs_1.firstValueFrom)(this.http.put(url, {
             listPrice: price,
             basePrice: price,
-        }, { headers: this.defaultHeaders() }));
+        }, { headers: this.buildDefaultHeaders(vtexConfig) }));
     }
-    async updateStock(skuId, warehouseId, quantity) {
-        const url = `${this.baseUrl()}/logistics/pvt/inventory/items/${skuId}/warehouses/${warehouseId}`;
-        const { data } = await (0, rxjs_1.firstValueFrom)(this.http.put(url, { quantity }, { headers: this.defaultHeaders() }));
+    async updateStock(shopId, skuId, warehouseId, quantity) {
+        const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+        const url = `${this.buildBaseUrl(vtexConfig)}/logistics/pvt/inventory/items/${skuId}/warehouses/${warehouseId}`;
+        const { data } = await (0, rxjs_1.firstValueFrom)(this.http.put(url, { quantity }, { headers: this.buildDefaultHeaders(vtexConfig) }));
         return data;
     }
-    async getSkuImages(skuId) {
-        const url = `${this.baseUrl()}/catalog/pvt/stockkeepingunit/${skuId}/file`;
+    async getSkuImages(shopId, skuId) {
+        const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+        const url = `${this.buildBaseUrl(vtexConfig)}/catalog/pvt/stockkeepingunit/${skuId}/file`;
         const { data } = await (0, rxjs_1.firstValueFrom)(this.http.get(url, {
-            headers: this.defaultHeaders(),
+            headers: this.buildDefaultHeaders(vtexConfig),
         }));
         if (!Array.isArray(data)) {
             this.logger.warn({ skuId, body: data }, 'VTEX getSkuImages returned unexpected payload; returning empty list');
@@ -176,7 +185,7 @@ let VtexCatalogClient = class VtexCatalogClient {
         }
         return data
             .map((file) => ({
-            url: this.buildVtexImageUrl(file),
+            url: this.buildVtexImageUrl(file, vtexConfig.account),
             isMain: Boolean(file?.IsMain) || file?.Position === 0,
             position: Number(file?.Position ?? 9999),
         }))
@@ -187,11 +196,11 @@ let VtexCatalogClient = class VtexCatalogClient {
             position: image.position,
         }));
     }
-    buildVtexImageUrl(file) {
+    buildVtexImageUrl(file, account) {
         const rawLocation = (typeof file?.FileLocation === 'string' && file.FileLocation) ||
             (typeof file?.fileLocation === 'string' && file.fileLocation) ||
             '';
-        const formatted = this.normalizeFileLocation(rawLocation);
+        const formatted = this.normalizeFileLocation(rawLocation, account);
         if (formatted) {
             return formatted;
         }
@@ -200,7 +209,7 @@ let VtexCatalogClient = class VtexCatalogClient {
             '';
         return fallback?.trim() || undefined;
     }
-    normalizeFileLocation(location) {
+    normalizeFileLocation(location, account) {
         if (!location) {
             return undefined;
         }
@@ -215,40 +224,37 @@ let VtexCatalogClient = class VtexCatalogClient {
         if (!sanitized) {
             return undefined;
         }
-        const accountPrefix = `${this.account}.`;
+        const accountPrefix = `${account}.`;
         const prefixed = sanitized.startsWith(accountPrefix)
             ? sanitized
             : `${accountPrefix}${sanitized}`;
         return `https://${prefixed}`;
     }
-    baseUrl() {
-        if (this.domainOverride) {
-            const domain = this.domainOverride.startsWith('http')
-                ? this.domainOverride
-                : `https://${this.domainOverride}`;
+    buildBaseUrl(config) {
+        if (config.domain) {
+            const domain = config.domain.startsWith('http')
+                ? config.domain
+                : `https://${config.domain}`;
             return `${domain.replace(/\/+$/, '')}/api`;
         }
-        const suffix = this.environment.includes('.')
-            ? this.environment
-            : `${this.environment}.com`;
-        return `https://${this.account}.${suffix}/api`;
+        const suffix = config.environment.includes('.')
+            ? config.environment
+            : `${config.environment}.com`;
+        return `https://${config.account}.${suffix}/api`;
     }
-    pricingBaseUrl() {
-        const pricingOverride = this.configService.get('VTEX_PRICING_DOMAIN', { infer: true });
-        if (pricingOverride) {
-            const domain = pricingOverride.startsWith('http')
-                ? pricingOverride
-                : `https://${pricingOverride}`;
+    buildPricingBaseUrl(config) {
+        if (config.pricingDomain) {
+            const domain = config.pricingDomain.startsWith('http')
+                ? config.pricingDomain
+                : `https://${config.pricingDomain}`;
             return domain.replace(/\/+$/, '');
         }
-        return `https://api.vtex.com/${this.account}`;
+        return `https://api.vtex.com/${config.account}`;
     }
-    defaultHeaders() {
-        const appKey = this.configService.getOrThrow('VTEX_APP_KEY', { infer: true });
-        const appToken = this.configService.getOrThrow('VTEX_APP_TOKEN', { infer: true });
+    buildDefaultHeaders(config) {
         return {
-            'X-VTEX-API-AppKey': appKey,
-            'X-VTEX-API-AppToken': appToken,
+            'X-VTEX-API-AppKey': config.appKey,
+            'X-VTEX-API-AppToken': config.appToken,
             'Content-Type': 'application/json',
         };
     }
@@ -258,6 +264,7 @@ exports.VtexCatalogClient = VtexCatalogClient = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [axios_1.HttpService,
         config_1.ConfigService,
+        shop_config_service_1.ShopConfigService,
         nestjs_pino_1.PinoLogger])
 ], VtexCatalogClient);
 //# sourceMappingURL=vtex-catalog.client.js.map

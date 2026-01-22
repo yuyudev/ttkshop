@@ -1,18 +1,24 @@
+import { ConfigService } from '@nestjs/config';
 import { PinoLogger } from 'nestjs-pino';
+import { AppConfig } from '../common/config';
 import { OrderWebhookDto } from '../common/dto';
 import { IdempotencyService } from '../common/idempotency.service';
 import { PrismaService } from '../prisma/prisma.service';
 import { TiktokOrderClient } from './tiktok-order.client';
 import { VtexOrdersClient } from './vtex-orders.client';
 import { LogisticsService } from '../logistics/logistics.service';
+import { ShopConfigService } from '../common/shop-config.service';
 export declare class OrdersService {
     private readonly tiktokClient;
     private readonly vtexClient;
     private readonly idempotency;
     private readonly prisma;
+    private readonly configService;
+    private readonly shopConfigService;
     private readonly logisticsService;
     private readonly logger;
-    constructor(tiktokClient: TiktokOrderClient, vtexClient: VtexOrdersClient, idempotency: IdempotencyService, prisma: PrismaService, logisticsService: LogisticsService, logger: PinoLogger);
+    private readonly labelTrigger;
+    constructor(tiktokClient: TiktokOrderClient, vtexClient: VtexOrdersClient, idempotency: IdempotencyService, prisma: PrismaService, configService: ConfigService<AppConfig>, shopConfigService: ShopConfigService, logisticsService: LogisticsService, logger: PinoLogger);
     handleWebhook(payload: OrderWebhookDto): Promise<"skipped" | "processed">;
     getLabel(orderId: string): Promise<{
         orderId: string;
@@ -23,6 +29,8 @@ export declare class OrdersService {
         document: any;
         labelUrl?: undefined;
     }>;
+    scheduleVtexMarketplaceNotification(payload: any, shopId: string): void;
+    handleVtexMarketplaceNotification(payload: any, shopId: string): Promise<void>;
     private buildVtexOrderPayload;
     private resolveSimulationPricing;
     private sanitizePriceTags;
@@ -41,4 +49,10 @@ export declare class OrdersService {
     private computeCpfDigit;
     private isValidCpf;
     private isValidCnpj;
+    private resolveMarketplaceServicesEndpoint;
+    private resolveMarketplaceEvent;
+    private buildMarketplaceIdempotencyKey;
+    private resolveOrderMapping;
+    private extractInvoiceData;
+    private resolveOrderValue;
 }

@@ -14,25 +14,25 @@ exports.CatalogService = void 0;
 const common_1 = require("@nestjs/common");
 const axios_1 = require("axios");
 const nestjs_pino_1 = require("nestjs-pino");
-const config_1 = require("@nestjs/config");
 const prisma_service_1 = require("../prisma/prisma.service");
 const vtex_catalog_client_1 = require("./vtex-catalog.client");
 const tiktok_product_client_1 = require("./tiktok-product.client");
 const category_mapping_service_1 = require("./category-mapping.service");
+const shop_config_service_1 = require("../common/shop-config.service");
 let CatalogService = CatalogService_1 = class CatalogService {
-    constructor(vtexClient, tiktokClient, prisma, logger, configService, categoryMappingService) {
+    constructor(vtexClient, tiktokClient, prisma, logger, categoryMappingService, shopConfigService) {
         this.vtexClient = vtexClient;
         this.tiktokClient = tiktokClient;
         this.prisma = prisma;
         this.logger = logger;
-        this.configService = configService;
         this.categoryMappingService = categoryMappingService;
+        this.shopConfigService = shopConfigService;
         this.MAX_SKUS_PER_RUN = 50;
         this.productSkuCache = new Map();
         this.logger.setContext(CatalogService_1.name);
     }
     async syncCatalog(shopId, input) {
-        const skuSummaries = await this.vtexClient.listSkus(input.updatedFrom);
+        const skuSummaries = await this.vtexClient.listSkus(shopId, input.updatedFrom);
         const processedSkuIds = new Set();
         const productGroups = new Map();
         let groupedSkuCount = 0;
@@ -43,7 +43,7 @@ let CatalogService = CatalogService_1 = class CatalogService {
             const skuId = String(id);
             if (!skuId)
                 continue;
-            const sku = await this.vtexClient.getSkuById(skuId);
+            const sku = await this.vtexClient.getSkuById(shopId, skuId);
             const productId = this.extractProductId(sku);
             if (!productId)
                 continue;
@@ -75,13 +75,13 @@ let CatalogService = CatalogService_1 = class CatalogService {
         let relatedSkuIds = [];
         let productId = null;
         try {
-            const sku = await this.vtexClient.getSkuById(vtexSkuId);
+            const sku = await this.vtexClient.getSkuById(shopId, vtexSkuId);
             productId = this.extractProductId(sku);
             if (!productId) {
                 throw new Error('VTEX SKU did not include productId');
             }
-            const product = await this.vtexClient.getProductById(productId);
-            relatedSkuIds = await this.getSkuIdsForProduct(productId, vtexSkuId);
+            const product = await this.vtexClient.getProductById(shopId, productId);
+            relatedSkuIds = await this.getSkuIdsForProduct(shopId, productId, vtexSkuId);
             if (!allowBudgetOverflow &&
                 remainingBudget >= 0 &&
                 relatedSkuIds.length > remainingBudget) {
@@ -135,12 +135,13 @@ let CatalogService = CatalogService_1 = class CatalogService {
             }
             const mappingBySkuId = new Map(effectiveMappings.map((mapping) => [mapping.vtexSkuId, mapping]));
             const skuInputs = [];
-            const vtexWarehouseId = this.configService.get('VTEX_WAREHOUSE_ID', { infer: true }) ?? '1_1';
+            const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+            const vtexWarehouseId = vtexConfig.warehouseId;
             for (const skuId of relatedSkuIds) {
-                const skuDetails = skuId === vtexSkuId ? sku : await this.vtexClient.getSkuById(skuId);
-                const price = await this.vtexClient.getPrice(skuId);
-                const images = await this.fetchImagesSafely(skuId);
-                const quantity = await this.vtexClient.getSkuInventory(skuId, vtexWarehouseId);
+                const skuDetails = skuId === vtexSkuId ? sku : await this.vtexClient.getSkuById(shopId, skuId);
+                const price = await this.vtexClient.getPrice(shopId, skuId);
+                const images = await this.fetchImagesSafely(shopId, skuId);
+                const quantity = await this.vtexClient.getSkuInventory(shopId, skuId, vtexWarehouseId);
                 const mapping = mappingBySkuId.get(skuId);
                 skuInputs.push({
                     vtexSkuId: skuId,
@@ -194,7 +195,7 @@ let CatalogService = CatalogService_1 = class CatalogService {
             let resolvedCategoryId = categoryFromMappings;
             let categorySource = categoryFromMappings ? 'mapping' : 'fallback';
             if (!resolvedCategoryId) {
-                const categoryResolution = await this.categoryMappingService.resolveCategory(product);
+                const categoryResolution = await this.categoryMappingService.resolveCategory(product, shopId);
                 resolvedCategoryId = categoryResolution.categoryId;
                 categorySource = categoryResolution.source;
             }
@@ -356,7 +357,7 @@ let CatalogService = CatalogService_1 = class CatalogService {
         }
     }
     async syncProduct(shopId, productId, options = {}) {
-        const skuIds = await this.getSkuIdsForProduct(productId);
+        const skuIds = await this.getSkuIdsForProduct(shopId, productId);
         if (!skuIds.length) {
             throw new Error(`No VTEX SKUs found for product ${productId}`);
         }
@@ -374,7 +375,7 @@ let CatalogService = CatalogService_1 = class CatalogService {
             null;
         return productId ? String(productId) : null;
     }
-    async getSkuIdsForProduct(productId, fallbackSkuId) {
+    async getSkuIdsForProduct(shopId, productId, fallbackSkuId) {
         const cached = this.productSkuCache.get(productId);
         if (cached && cached.length) {
             if (fallbackSkuId && !cached.includes(fallbackSkuId)) {
@@ -386,7 +387,7 @@ let CatalogService = CatalogService_1 = class CatalogService {
         }
         let relatedSkuIds = [];
         try {
-            const productSkusPayload = await this.vtexClient.getProductWithSkus(productId);
+            const productSkusPayload = await this.vtexClient.getProductWithSkus(shopId, productId);
             relatedSkuIds = this.normalizeProductSkuIds(productSkusPayload);
         }
         catch (error) {
@@ -400,7 +401,7 @@ let CatalogService = CatalogService_1 = class CatalogService {
         }
         if (!relatedSkuIds.length) {
             try {
-                const searchPayload = await this.vtexClient.searchProductWithItems(productId);
+                const searchPayload = await this.vtexClient.searchProductWithItems(shopId, productId);
                 relatedSkuIds = this.extractSkuIdsFromSearchPayload(searchPayload);
             }
             catch (error) {
@@ -509,9 +510,9 @@ let CatalogService = CatalogService_1 = class CatalogService {
         }
         return undefined;
     }
-    async fetchImagesSafely(skuId) {
+    async fetchImagesSafely(shopId, skuId) {
         try {
-            return await this.vtexClient.getSkuImages(String(skuId));
+            return await this.vtexClient.getSkuImages(shopId, String(skuId));
         }
         catch (error) {
             if (this.isNotFoundError(error)) {
@@ -578,7 +579,7 @@ exports.CatalogService = CatalogService = CatalogService_1 = __decorate([
         tiktok_product_client_1.TiktokProductClient,
         prisma_service_1.PrismaService,
         nestjs_pino_1.PinoLogger,
-        config_1.ConfigService,
-        category_mapping_service_1.CategoryMappingService])
+        category_mapping_service_1.CategoryMappingService,
+        shop_config_service_1.ShopConfigService])
 ], CatalogService);
 //# sourceMappingURL=catalog.service.js.map

@@ -32,6 +32,7 @@ import { TiktokLogisticsClient } from './logistics/tiktok-logistics.client';
 import { PrismaModule } from './prisma/prisma.module';
 import { IdempotencyService } from './common/idempotency.service';
 import { generateRequestId } from './common/utils';
+import { ShopConfigService } from './common/shop-config.service';
 
 @Module({
   imports: [
@@ -106,6 +107,7 @@ import { generateRequestId } from './common/utils';
     LogisticsService,
     TiktokLogisticsClient,
     IdempotencyService,
+    ShopConfigService,
   ],
 })
 export class AppModule implements NestModule {

@@ -1,55 +1,52 @@
 import { HttpService } from '@nestjs/axios';
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import { PinoLogger } from 'nestjs-pino';
 
-import { AppConfig } from '../common/config';
+import { ShopConfigService, VtexShopConfig } from '../common/shop-config.service';
 
 @Injectable()
 export class VtexOrdersClient {
-  private readonly account: string;
-  private readonly environment: string;
-  private readonly domainOverride?: string;
-
   constructor(
     private readonly http: HttpService,
-    private readonly configService: ConfigService<AppConfig>,
+    private readonly shopConfigService: ShopConfigService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(VtexOrdersClient.name);
-    this.account = this.configService.getOrThrow<string>('VTEX_ACCOUNT', { infer: true });
-    this.environment = this.configService.getOrThrow<string>('VTEX_ENVIRONMENT', { infer: true });
-    this.domainOverride = this.configService.get<string>('VTEX_DOMAIN', { infer: true });
   }
 
-  async createOrder(payload: unknown) {
+  async createOrder(shopId: string, payload: unknown) {
+    const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
     // Use Fulfillment API for external marketplace orders
-    const url = `${this.baseUrl()}/fulfillment/pvt/orders`;
+    const url = `${this.buildBaseUrl(vtexConfig)}/fulfillment/pvt/orders`;
     // Add sales channel query param (default to 1 or config)
-    const sc = this.configService.get<string>('VTEX_SALES_CHANNEL') ?? '1';
-    const affiliateId = this.configService.get<string>('VTEX_AFFILIATE_ID', { infer: true });
-    return firstValueFrom(this.http.post(url, payload, {
-      headers: this.headers(),
-      params: {
-        sc,
-        ...(affiliateId ? { affiliateId } : {}),
-      },
-    }));
+    const sc = vtexConfig.salesChannel;
+    const affiliateId = vtexConfig.affiliateId;
+    return firstValueFrom(
+      this.http.post(url, payload, {
+        headers: this.buildHeaders(vtexConfig),
+        params: {
+          sc,
+          ...(affiliateId ? { affiliateId } : {}),
+        },
+      }),
+    );
   }
 
-  async getOrder(orderId: string) {
-    const url = `${this.baseUrl()}/oms/pvt/orders/${orderId}`;
-    return firstValueFrom(this.http.get(url, { headers: this.headers() }));
+  async getOrder(shopId: string, orderId: string) {
+    const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+    const url = `${this.buildBaseUrl(vtexConfig)}/oms/pvt/orders/${orderId}`;
+    return firstValueFrom(this.http.get(url, { headers: this.buildHeaders(vtexConfig) }));
   }
 
-  async simulateOrder(items: any[], postalCode: string, country: string) {
+  async simulateOrder(shopId: string, items: any[], postalCode: string, country: string) {
+    const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
     // Correct endpoint for simulation: /api/checkout/pub/orderForms/simulation
-    const url = `${this.baseUrl()}/checkout/pub/orderForms/simulation`;
-    const sc = this.configService.get<string>('VTEX_SALES_CHANNEL') ?? '1';
-    const affiliateId = this.configService.get<string>('VTEX_AFFILIATE_ID', { infer: true });
+    const url = `${this.buildBaseUrl(vtexConfig)}/checkout/pub/orderForms/simulation`;
+    const sc = vtexConfig.salesChannel;
+    const affiliateId = vtexConfig.affiliateId;
     const payload = {
-      items: items.map(item => ({
+      items: items.map((item) => ({
         id: item.id,
         quantity: item.quantity,
         seller: item.seller,
@@ -58,16 +55,19 @@ export class VtexOrdersClient {
       country,
     };
     this.logger.info({ url, payload }, 'Calling VTEX simulation endpoint');
-    return firstValueFrom(this.http.post(url, payload, {
-      headers: this.headers(),
-      params: {
-        sc,
-        ...(affiliateId ? { affiliateId } : {}),
-      },
-    }));
+    return firstValueFrom(
+      this.http.post(url, payload, {
+        headers: this.buildHeaders(vtexConfig),
+        params: {
+          sc,
+          ...(affiliateId ? { affiliateId } : {}),
+        },
+      }),
+    );
   }
 
-  async updateTracking(orderId: string, invoiceData: any) {
+  async updateTracking(shopId: string, orderId: string, invoiceData: any) {
+    const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
     // VTEX Invoice API: POST /oms/pvt/orders/{orderId}/invoice
     // Payload structure:
     // {
@@ -79,29 +79,37 @@ export class VtexOrdersClient {
     //   "courier": "...",
     //   "items": [...]
     // }
-    const url = `${this.baseUrl()}/oms/pvt/orders/${orderId}/invoice`;
-    return firstValueFrom(this.http.post(url, invoiceData, { headers: this.headers() }));
+    const url = `${this.buildBaseUrl(vtexConfig)}/oms/pvt/orders/${orderId}/invoice`;
+    return firstValueFrom(
+      this.http.post(url, invoiceData, { headers: this.buildHeaders(vtexConfig) }),
+    );
   }
 
-  private baseUrl(): string {
-    if (this.domainOverride) {
-      const base = this.domainOverride.startsWith('http')
-        ? this.domainOverride
-        : `https://${this.domainOverride}`;
+  async authorizeDispatch(shopId: string, orderId: string) {
+    const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+    const url = `${this.buildBaseUrl(vtexConfig)}/fulfillment/pvt/orders/${orderId}/fulfill`;
+    return firstValueFrom(
+      this.http.post(url, null, { headers: this.buildHeaders(vtexConfig) }),
+    );
+  }
+
+  private buildBaseUrl(config: VtexShopConfig): string {
+    if (config.domain) {
+      const base = config.domain.startsWith('http')
+        ? config.domain
+        : `https://${config.domain}`;
       return base.replace(/\/+$/, '') + '/api';
     }
-    const suffix = this.environment.includes('.')
-      ? this.environment
-      : `${this.environment}.com`;
-    return `https://${this.account}.${suffix}/api`;
+    const suffix = config.environment.includes('.')
+      ? config.environment
+      : `${config.environment}.com`;
+    return `https://${config.account}.${suffix}/api`;
   }
 
-  private headers() {
-    const appKey = this.configService.getOrThrow<string>('VTEX_APP_KEY', { infer: true });
-    const appToken = this.configService.getOrThrow<string>('VTEX_APP_TOKEN', { infer: true });
+  private buildHeaders(config: VtexShopConfig) {
     return {
-      'X-VTEX-API-AppKey': appKey,
-      'X-VTEX-API-AppToken': appToken,
+      'X-VTEX-API-AppKey': config.appKey,
+      'X-VTEX-API-AppToken': config.appToken,
       'Content-Type': 'application/json',
     };
   }

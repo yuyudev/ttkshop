@@ -6,23 +6,23 @@ import { firstValueFrom } from 'rxjs';
 import { AppConfig } from '../common/config';
 import { TiktokShopService } from '../auth/tiktokshop.service';
 import { buildSignedRequest } from '../common/signer';
+import { ShopConfigService } from '../common/shop-config.service';
 
 @Injectable()
 export class TiktokOrderClient {
   private readonly openBase: string;
   private readonly appKey: string;
   private readonly appSecret: string;
-  private readonly shopCipher: string;
 
   constructor(
     private readonly http: HttpService,
     private readonly configService: ConfigService<AppConfig>,
     private readonly tiktokShopService: TiktokShopService,
+    private readonly shopConfigService: ShopConfigService,
   ) {
     this.openBase = this.configService.getOrThrow<string>('TIKTOK_BASE_OPEN', { infer: true });
     this.appKey = this.configService.getOrThrow<string>('TIKTOK_APP_KEY', { infer: true });
     this.appSecret = this.configService.getOrThrow<string>('TIKTOK_APP_SECRET', { infer: true });
-    this.shopCipher = this.configService.getOrThrow<string>('TIKTOK_SHOP_CIPHER', { infer: true });
   }
 
   async listOrders(shopId: string, params: Record<string, string> = {}) {
@@ -50,6 +50,7 @@ export class TiktokOrderClient {
       const baseUrl = this.openBase.replace(/\/$/, '');
       const cleanPath = path.startsWith('/') ? path : `/${path}`;
 
+      const shopConfig = await this.shopConfigService.getTiktokOrderConfig(shopId);
       const { url, headers, body } = buildSignedRequest(
         baseUrl,
         cleanPath,
@@ -57,7 +58,7 @@ export class TiktokOrderClient {
         this.appSecret,
         {
           qs: {
-            shop_cipher: this.shopCipher,
+            shop_cipher: shopConfig.shopCipher,
             shop_id: shopId,
             ...params,
           },

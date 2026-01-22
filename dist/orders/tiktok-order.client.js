@@ -16,15 +16,16 @@ const config_1 = require("@nestjs/config");
 const rxjs_1 = require("rxjs");
 const tiktokshop_service_1 = require("../auth/tiktokshop.service");
 const signer_1 = require("../common/signer");
+const shop_config_service_1 = require("../common/shop-config.service");
 let TiktokOrderClient = class TiktokOrderClient {
-    constructor(http, configService, tiktokShopService) {
+    constructor(http, configService, tiktokShopService, shopConfigService) {
         this.http = http;
         this.configService = configService;
         this.tiktokShopService = tiktokShopService;
+        this.shopConfigService = shopConfigService;
         this.openBase = this.configService.getOrThrow('TIKTOK_BASE_OPEN', { infer: true });
         this.appKey = this.configService.getOrThrow('TIKTOK_APP_KEY', { infer: true });
         this.appSecret = this.configService.getOrThrow('TIKTOK_APP_SECRET', { infer: true });
-        this.shopCipher = this.configService.getOrThrow('TIKTOK_SHOP_CIPHER', { infer: true });
     }
     async listOrders(shopId, params = {}) {
         return this.request(shopId, 'get', '/order/202309/orders/search', undefined, params);
@@ -39,9 +40,10 @@ let TiktokOrderClient = class TiktokOrderClient {
         return this.withTokenRetry(shopId, async (token) => {
             const baseUrl = this.openBase.replace(/\/$/, '');
             const cleanPath = path.startsWith('/') ? path : `/${path}`;
+            const shopConfig = await this.shopConfigService.getTiktokOrderConfig(shopId);
             const { url, headers, body } = (0, signer_1.buildSignedRequest)(baseUrl, cleanPath, this.appKey, this.appSecret, {
                 qs: {
-                    shop_cipher: this.shopCipher,
+                    shop_cipher: shopConfig.shopCipher,
                     shop_id: shopId,
                     ...params,
                 },
@@ -81,6 +83,7 @@ exports.TiktokOrderClient = TiktokOrderClient = __decorate([
     (0, common_1.Injectable)(),
     __metadata("design:paramtypes", [axios_1.HttpService,
         config_1.ConfigService,
-        tiktokshop_service_1.TiktokShopService])
+        tiktokshop_service_1.TiktokShopService,
+        shop_config_service_1.ShopConfigService])
 ], TiktokOrderClient);
 //# sourceMappingURL=tiktok-order.client.js.map

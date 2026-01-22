@@ -40,6 +40,7 @@ const tiktok_logistics_client_1 = require("./logistics/tiktok-logistics.client")
 const prisma_module_1 = require("./prisma/prisma.module");
 const idempotency_service_1 = require("./common/idempotency.service");
 const utils_1 = require("./common/utils");
+const shop_config_service_1 = require("./common/shop-config.service");
 let AppModule = class AppModule {
     configure(consumer) {
         consumer.apply(webhook_middleware_1.TiktokWebhookMiddleware).forRoutes('webhooks/tiktok/orders');
@@ -119,6 +120,7 @@ exports.AppModule = AppModule = __decorate([
             logistics_service_1.LogisticsService,
             tiktok_logistics_client_1.TiktokLogisticsClient,
             idempotency_service_1.IdempotencyService,
+            shop_config_service_1.ShopConfigService,
         ],
     })
 ], AppModule);

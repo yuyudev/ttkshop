@@ -17,21 +17,6 @@ exports.configSchema = zod_1.z.object({
     TIKTOK_BASE_AUTH: zod_1.z.string().url('TIKTOK_BASE_AUTH must be a valid URL'),
     TIKTOK_BASE_OPEN: zod_1.z.string().url('TIKTOK_BASE_OPEN must be a valid URL'),
     TIKTOK_BASE_SERV: zod_1.z.string().url('TIKTOK_BASE_SERV must be a valid URL'),
-    TIKTOK_SHOP_CIPHER: zod_1.z.string().min(1, 'TIKTOK_SHOP_CIPHER is required'),
-    TIKTOK_SHOP_ID: zod_1.z
-        .string()
-        .optional()
-        .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
-    TIKTOK_DEFAULT_CATEGORY_ID: zod_1.z.string().min(1, 'TIKTOK_DEFAULT_CATEGORY_ID is required'),
-    TIKTOK_BRAND_ID: zod_1.z
-        .string()
-        .optional()
-        .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
-    TIKTOK_BRAND_NAME: zod_1.z
-        .string()
-        .optional()
-        .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
-    TIKTOK_WAREHOUSE_ID: zod_1.z.string().min(1, 'TIKTOK_WAREHOUSE_ID is required'),
     TIKTOK_CURRENCY: zod_1.z
         .string()
         .min(3)
@@ -96,27 +81,6 @@ exports.configSchema = zod_1.z.object({
             .map((item) => item.trim())
             .filter(Boolean)
         : undefined),
-    VTEX_ACCOUNT: zod_1.z.string().min(1, 'VTEX_ACCOUNT is required'),
-    VTEX_ENVIRONMENT: zod_1.z
-        .string()
-        .min(1, 'VTEX_ENVIRONMENT is required')
-        .default('vtexcommercestable'),
-    VTEX_DOMAIN: zod_1.z
-        .string()
-        .optional()
-        .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
-    VTEX_APP_KEY: zod_1.z.string().min(1, 'VTEX_APP_KEY is required'),
-    VTEX_APP_TOKEN: zod_1.z.string().min(1, 'VTEX_APP_TOKEN is required'),
-    VTEX_AFFILIATE_ID: zod_1.z
-        .string()
-        .optional()
-        .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
-    VTEX_WAREHOUSE_ID: zod_1.z
-        .string()
-        .optional()
-        .transform((value) => (value && value.trim().length > 0 ? value.trim() : '1_1')),
-    VTEX_WEBHOOK_TOKEN: zod_1.z.string().min(1, 'VTEX_WEBHOOK_TOKEN is required'),
-    VTEX_SALES_CHANNEL: zod_1.z.string().optional().default('1'),
     PUBLIC_BASE_URL: zod_1.z.string().url('PUBLIC_BASE_URL must be a valid URL'),
     TTS_REDIRECT_PATH: zod_1.z.string().min(1, 'TTS_REDIRECT_PATH is required'),
     MIDDLEWARE_API_KEY: zod_1.z.string().min(1, 'MIDDLEWARE_API_KEY is required'),
@@ -139,6 +103,7 @@ exports.configSchema = zod_1.z.object({
         .refine((value) => Number.isFinite(value) && value >= 0, {
         message: 'HTTP_MAX_RETRIES must be a non-negative integer',
     }),
+    TTS_LABEL_TRIGGER: zod_1.z.enum(['immediate', 'invoice']).default('immediate'),
     VTEX_PAGE_SIZE: zod_1.z
         .string()
         .optional()

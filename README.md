@@ -75,6 +75,7 @@ SWAGGER_PASSWORD=strongpass
 TOKEN_ENCRYPTION_KEY=chave_com_32_bytes_no_minimo_123456
 REQUEST_TIMEOUT_MS=10000
 HTTP_MAX_RETRIES=3
+TTS_LABEL_TRIGGER=immediate
 
 OPENAI_API_KEY=sk-xxx
 # opcional
@@ -116,6 +117,7 @@ docker-compose exec app npx prisma migrate deploy
 - `GET /oauth/tiktokshop/callback` – callback OAuth TikTok Shop
 - `POST /webhooks/tiktok/orders` – webhook de pedidos
 - `POST /webhooks/vtex/notify/:token` – webhook VTEX (estoque/preço/catálogo)
+- `POST /webhooks/vtex/marketplace/:token` – webhook VTEX marketplace (faturamento/NF)
 - Rotas internas (`x-api-key`):
   - `POST /internal/catalog/sync`
   - `POST /internal/inventory/sync`
@@ -167,6 +169,7 @@ npm run test:e2e # cenários e2e (supertest)
   - Automático: execução única em 20/11/2025 às 00:01 (horário de Brasília) conforme `CatalogScheduler`.
   - Manual: `npm run catalog:sync-all -- --shop=SHOP_ID [--start=PRODUCT_ID]`
   - O comando manual inicializa o Nest em modo CLI, chama o scheduler internamente e segue o mesmo fluxo utilizado no cron.
+  - Lista por arquivo: `npm run catalog:sync-file -- --shop=SHOP_ID --file=/caminho/para/ids.txt`
 
 ### Próximos passos sugeridos
 - Configurar monitoramento Prometheus/Grafana.

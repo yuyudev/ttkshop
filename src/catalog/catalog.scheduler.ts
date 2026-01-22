@@ -35,7 +35,7 @@ export class CatalogScheduler {
   async syncAllProducts(shopId: string, startProductId?: string): Promise<void> {
     this.logger.info({ shopId }, 'Starting full catalog sync');
 
-    const skuSummaries = await this.vtexClient.listSkus();
+    const skuSummaries = await this.vtexClient.listSkus(shopId);
     if (!skuSummaries.length) {
       this.logger.warn({ shopId }, 'VTEX listSkus returned no products; aborting');
       return;

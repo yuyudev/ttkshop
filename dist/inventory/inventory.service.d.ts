@@ -1,19 +1,18 @@
-import { ConfigService } from '@nestjs/config';
 import { PinoLogger } from 'nestjs-pino';
 import { InventorySyncDto } from '../common/dto';
 import { PrismaService } from '../prisma/prisma.service';
 import { VtexCatalogClient } from '../catalog/vtex-catalog.client';
 import { TiktokProductClient } from '../catalog/tiktok-product.client';
 import { CatalogService } from '../catalog/catalog.service';
-import { AppConfig } from '../common/config';
+import { ShopConfigService } from '../common/shop-config.service';
 export declare class InventoryService {
     private readonly prisma;
     private readonly vtexClient;
     private readonly tiktokClient;
     private readonly catalogService;
-    private readonly configService;
+    private readonly shopConfigService;
     private readonly logger;
-    constructor(prisma: PrismaService, vtexClient: VtexCatalogClient, tiktokClient: TiktokProductClient, catalogService: CatalogService, configService: ConfigService<AppConfig>, logger: PinoLogger);
+    constructor(prisma: PrismaService, vtexClient: VtexCatalogClient, tiktokClient: TiktokProductClient, catalogService: CatalogService, shopConfigService: ShopConfigService, logger: PinoLogger);
     syncInventory(shopId: string, payload: InventorySyncDto): Promise<{
         shopId: string;
         warehouseId: string;
@@ -55,8 +54,8 @@ export declare class InventoryService {
         reason?: undefined;
     }>;
     scheduleVtexInventory(payload: any): void;
-    scheduleVtexNotification(payload: any): void;
-    handleVtexNotification(payload: any): Promise<{
+    scheduleVtexNotification(payload: any, shopId?: string): void;
+    handleVtexNotification(payload: any, shopId?: string): Promise<{
         status: string;
         reason: string;
         results?: undefined;

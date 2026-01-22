@@ -12,19 +12,19 @@ var InventoryService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.InventoryService = void 0;
 const common_1 = require("@nestjs/common");
-const config_1 = require("@nestjs/config");
 const nestjs_pino_1 = require("nestjs-pino");
 const prisma_service_1 = require("../prisma/prisma.service");
 const vtex_catalog_client_1 = require("../catalog/vtex-catalog.client");
 const tiktok_product_client_1 = require("../catalog/tiktok-product.client");
 const catalog_service_1 = require("../catalog/catalog.service");
+const shop_config_service_1 = require("../common/shop-config.service");
 let InventoryService = InventoryService_1 = class InventoryService {
-    constructor(prisma, vtexClient, tiktokClient, catalogService, configService, logger) {
+    constructor(prisma, vtexClient, tiktokClient, catalogService, shopConfigService, logger) {
         this.prisma = prisma;
         this.vtexClient = vtexClient;
         this.tiktokClient = tiktokClient;
         this.catalogService = catalogService;
-        this.configService = configService;
+        this.shopConfigService = shopConfigService;
         this.logger = logger;
         this.logger.setContext(InventoryService_1.name);
     }
@@ -39,13 +39,12 @@ let InventoryService = InventoryService_1 = class InventoryService {
         const skuIds = payload.skuIds?.length
             ? payload.skuIds
             : mappings.map((item) => item.vtexSkuId);
-        const warehouseId = payload.warehouseId ??
-            this.configService.get('VTEX_WAREHOUSE_ID', { infer: true }) ??
-            '1_1';
+        const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+        const warehouseId = payload.warehouseId ?? vtexConfig.warehouseId;
         const results = [];
         for (const skuId of skuIds) {
             try {
-                const inventory = await this.vtexClient.getSkuInventory(skuId, warehouseId);
+                const inventory = await this.vtexClient.getSkuInventory(shopId, skuId, warehouseId);
                 const mapping = mappings.find((item) => item.vtexSkuId === skuId);
                 if (!mapping?.ttsSkuId || !mapping.ttsProductId) {
                     continue;
@@ -111,14 +110,14 @@ let InventoryService = InventoryService_1 = class InventoryService {
             });
         });
     }
-    scheduleVtexNotification(payload) {
+    scheduleVtexNotification(payload, shopId) {
         setImmediate(() => {
-            this.handleVtexNotification(payload).catch((error) => {
+            this.handleVtexNotification(payload, shopId).catch((error) => {
                 this.logger.error({ err: error }, 'Failed to process VTEX notification');
             });
         });
     }
-    async handleVtexNotification(payload) {
+    async handleVtexNotification(payload, shopId) {
         this.logger.info({ payload }, 'VTEX broadcaster notification payload received');
         const items = Array.isArray(payload) ? payload : [payload];
         this.logger.info({ itemCount: items.length, items }, 'VTEX broadcaster items received');
@@ -171,6 +170,7 @@ let InventoryService = InventoryService_1 = class InventoryService {
                 status: 'synced',
                 ttsSkuId: { not: null },
                 ttsProductId: { not: null },
+                ...(shopId ? { shopId } : {}),
             },
         }));
         if (!mappings.length) {
@@ -180,9 +180,9 @@ let InventoryService = InventoryService_1 = class InventoryService {
         const shopIds = Array.from(new Set(mappings.map((mapping) => mapping.shopId)));
         this.logger.info({ shopCount: shopIds.length, shopIds, mappedSkus: mappings.length }, 'Resolved shops for VTEX notification');
         const results = [];
-        const warehouseId = this.configService.get('VTEX_WAREHOUSE_ID', { infer: true }) ??
-            '1_1';
         for (const shopId of shopIds) {
+            const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+            const warehouseId = vtexConfig.warehouseId;
             const shopMappings = mappings.filter((mapping) => mapping.shopId === shopId);
             const shopSkuIds = new Set(shopMappings.map((mapping) => mapping.vtexSkuId));
             const shopUpdateSkuIds = Array.from(updateSkuIds).filter((skuId) => shopSkuIds.has(skuId));
@@ -322,7 +322,7 @@ exports.InventoryService = InventoryService = InventoryService_1 = __decorate([
         vtex_catalog_client_1.VtexCatalogClient,
         tiktok_product_client_1.TiktokProductClient,
         catalog_service_1.CatalogService,
-        config_1.ConfigService,
+        shop_config_service_1.ShopConfigService,
         nestjs_pino_1.PinoLogger])
 ], InventoryService);
 //# sourceMappingURL=inventory.service.js.map

@@ -1,8 +1,10 @@
+import { ShopConfigService } from '../common/shop-config.service';
 import { TiktokWebhookDto } from '../common/dto';
 import { OrdersService } from './orders.service';
 export declare class OrdersController {
     private readonly ordersService;
-    constructor(ordersService: OrdersService);
+    private readonly shopConfigService;
+    constructor(ordersService: OrdersService, shopConfigService: ShopConfigService);
     handleWebhook(payload: TiktokWebhookDto): Promise<{
         status: string;
     }>;
@@ -14,5 +16,8 @@ export declare class OrdersController {
         orderId: string;
         document: any;
         labelUrl?: undefined;
+    }>;
+    handleVtexMarketplace(token: string, payload: any): Promise<{
+        status: string;
     }>;
 }

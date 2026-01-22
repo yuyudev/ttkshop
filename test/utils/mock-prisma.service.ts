@@ -7,6 +7,26 @@ interface TiktokAuthRecord {
   accessExpiresAt: Date;
   refreshToken: string;
   scopes?: string | null;
+  tiktokShopCipher?: string | null;
+  tiktokWarehouseId?: string | null;
+  tiktokDefaultCategoryId?: string | null;
+  tiktokBrandId?: string | null;
+  tiktokBrandName?: string | null;
+  vtexWebhookToken?: string | null;
+  vtexAffiliateId?: string | null;
+  vtexSalesChannel?: string | null;
+  vtexAccount?: string | null;
+  vtexEnvironment?: string | null;
+  vtexAppKey?: string | null;
+  vtexAppToken?: string | null;
+  vtexWarehouseId?: string | null;
+  vtexDomain?: string | null;
+  vtexPricingDomain?: string | null;
+  vtexMarketplaceServicesEndpoint?: string | null;
+  vtexPaymentSystemId?: string | null;
+  vtexPaymentSystemName?: string | null;
+  vtexPaymentGroup?: string | null;
+  vtexPaymentMerchant?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -69,6 +89,11 @@ class TiktokAuthDelegate {
       return Array.from(this.store.values()).map((item) => ({ shopId: item.shopId }));
     }
     return Array.from(this.store.values()) as any;
+  }
+
+  async findFirst(args: { where: any; select?: any }): Promise<TiktokAuthRecord | null> {
+    const entries = Array.from(this.store.values());
+    return entries.find((entry) => matchesWhere(entry, args.where)) ?? null;
   }
 
   async upsert(args: {

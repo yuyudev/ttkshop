@@ -15,11 +15,13 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.OrdersController = void 0;
 const common_1 = require("@nestjs/common");
 const auth_guard_1 = require("../auth/auth.guard");
+const shop_config_service_1 = require("../common/shop-config.service");
 const dto_1 = require("../common/dto");
 const orders_service_1 = require("./orders.service");
 let OrdersController = class OrdersController {
-    constructor(ordersService) {
+    constructor(ordersService, shopConfigService) {
         this.ordersService = ordersService;
+        this.shopConfigService = shopConfigService;
     }
     async handleWebhook(payload) {
         const data = payload?.data;
@@ -40,6 +42,11 @@ let OrdersController = class OrdersController {
     async getLabel(orderId) {
         return this.ordersService.getLabel(orderId);
     }
+    async handleVtexMarketplace(token, payload) {
+        const shopId = await this.shopConfigService.resolveShopIdByVtexWebhookToken(token);
+        this.ordersService.scheduleVtexMarketplaceNotification(payload, shopId);
+        return { status: 'accepted' };
+    }
 };
 exports.OrdersController = OrdersController;
 __decorate([
@@ -58,8 +65,18 @@ __decorate([
     __metadata("design:paramtypes", [String]),
     __metadata("design:returntype", Promise)
 ], OrdersController.prototype, "getLabel", null);
+__decorate([
+    (0, common_1.Post)('webhooks/vtex/marketplace/:token'),
+    (0, common_1.HttpCode)(200),
+    __param(0, (0, common_1.Param)('token')),
+    __param(1, (0, common_1.Body)()),
+    __metadata("design:type", Function),
+    __metadata("design:paramtypes", [String, Object]),
+    __metadata("design:returntype", Promise)
+], OrdersController.prototype, "handleVtexMarketplace", null);
 exports.OrdersController = OrdersController = __decorate([
     (0, common_1.Controller)(),
-    __metadata("design:paramtypes", [orders_service_1.OrdersService])
+    __metadata("design:paramtypes", [orders_service_1.OrdersService,
+        shop_config_service_1.ShopConfigService])
 ], OrdersController);
 //# sourceMappingURL=orders.controller.js.map

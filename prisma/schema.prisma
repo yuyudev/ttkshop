@@ -20,6 +20,26 @@ model TiktokAuth {
   accessExpiresAt DateTime
   refreshToken    String
   scopes          String?
+  tiktokShopCipher String?
+  tiktokWarehouseId String?
+  tiktokDefaultCategoryId String?
+  tiktokBrandId   String?
+  tiktokBrandName String?
+  vtexWebhookToken String?
+  vtexAffiliateId String?
+  vtexSalesChannel String?
+  vtexAccount     String?
+  vtexEnvironment String?
+  vtexAppKey      String?
+  vtexAppToken    String?
+  vtexWarehouseId String?
+  vtexDomain      String?
+  vtexPricingDomain String?
+  vtexMarketplaceServicesEndpoint String?
+  vtexPaymentSystemId String?
+  vtexPaymentSystemName String?
+  vtexPaymentGroup String?
+  vtexPaymentMerchant String?
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 }

@@ -12,22 +12,32 @@ var OrdersService_1;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.OrdersService = void 0;
 const common_1 = require("@nestjs/common");
+const config_1 = require("@nestjs/config");
 const crypto_1 = require("crypto");
+const promises_1 = require("timers/promises");
 const nestjs_pino_1 = require("nestjs-pino");
 const idempotency_service_1 = require("../common/idempotency.service");
 const prisma_service_1 = require("../prisma/prisma.service");
 const tiktok_order_client_1 = require("./tiktok-order.client");
 const vtex_orders_client_1 = require("./vtex-orders.client");
 const logistics_service_1 = require("../logistics/logistics.service");
+const shop_config_service_1 = require("../common/shop-config.service");
+const utils_1 = require("../common/utils");
 let OrdersService = OrdersService_1 = class OrdersService {
-    constructor(tiktokClient, vtexClient, idempotency, prisma, logisticsService, logger) {
+    constructor(tiktokClient, vtexClient, idempotency, prisma, configService, shopConfigService, logisticsService, logger) {
         this.tiktokClient = tiktokClient;
         this.vtexClient = vtexClient;
         this.idempotency = idempotency;
         this.prisma = prisma;
+        this.configService = configService;
+        this.shopConfigService = shopConfigService;
         this.logisticsService = logisticsService;
         this.logger = logger;
         this.logger.setContext(OrdersService_1.name);
+        const trigger = this.configService.get('TTS_LABEL_TRIGGER', {
+            infer: true,
+        });
+        this.labelTrigger = trigger === 'invoice' ? 'invoice' : 'immediate';
     }
     async handleWebhook(payload) {
         const shopId = payload.shop_id;
@@ -70,16 +80,17 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 });
                 let vtexResponse;
                 try {
-                    vtexResponse = await this.vtexClient.createOrder(vtexPayload);
+                    vtexResponse = await this.vtexClient.createOrder(shopId, vtexPayload);
                     const responseData = vtexResponse.data;
                     const firstOrder = Array.isArray(responseData) ? responseData[0] : responseData;
                     const vtexOrderId = firstOrder?.orderId ?? firstOrder?.id ?? null;
                     this.logger.info({ orderId, vtexOrderId }, 'Created VTEX order successfully');
+                    const orderStatus = this.labelTrigger === 'invoice' ? 'awaiting_invoice' : 'imported';
                     await this.prisma.orderMap.upsert({
                         where: { ttsOrderId: orderId },
                         update: {
                             vtexOrderId,
-                            status: 'imported',
+                            status: orderStatus,
                             lastError: null,
                             shopId,
                         },
@@ -87,11 +98,25 @@ let OrdersService = OrdersService_1 = class OrdersService {
                             ttsOrderId: orderId,
                             shopId,
                             vtexOrderId,
-                            status: 'imported',
+                            status: orderStatus,
                         },
                     });
-                    this.logger.info({ orderId, orderValue: orderDetails?.payment?.total }, 'Initiating label generation');
-                    await this.logisticsService.generateLabel(shopId, orderId, orderDetails?.payment?.total ?? 0);
+                    try {
+                        this.logger.info({ orderId, vtexOrderId }, 'Waiting before VTEX dispatch authorization');
+                        await (0, promises_1.setTimeout)(15_000);
+                        await this.vtexClient.authorizeDispatch(shopId, vtexOrderId);
+                        this.logger.info({ orderId, vtexOrderId }, 'VTEX dispatch authorized');
+                    }
+                    catch (authorizeError) {
+                        this.logger.error({ err: authorizeError, orderId, vtexOrderId }, 'Failed to authorize VTEX dispatch');
+                    }
+                    if (this.labelTrigger === 'invoice') {
+                        this.logger.info({ orderId, vtexOrderId }, 'Label generation deferred until invoice notification');
+                    }
+                    else {
+                        this.logger.info({ orderId, orderValue: orderDetails?.payment?.total }, 'Initiating label generation');
+                        await this.logisticsService.generateLabel(shopId, orderId, orderDetails?.payment?.total ?? 0);
+                    }
                     this.logger.info({ orderId, vtexOrderId }, 'TikTok order processed successfully');
                 }
                 catch (vtexError) {
@@ -103,16 +128,17 @@ let OrdersService = OrdersService_1 = class OrdersService {
                         vtexPayload = await this.buildVtexOrderPayload(orderDetails, shopId, {
                             priceMode: 'price',
                         });
-                        vtexResponse = await this.vtexClient.createOrder(vtexPayload);
+                        vtexResponse = await this.vtexClient.createOrder(shopId, vtexPayload);
                         const responseData = vtexResponse.data;
                         const firstOrder = Array.isArray(responseData) ? responseData[0] : responseData;
                         const vtexOrderId = firstOrder?.orderId ?? firstOrder?.id ?? null;
                         this.logger.info({ orderId, vtexOrderId }, 'Created VTEX order successfully after price fallback');
+                        const orderStatus = this.labelTrigger === 'invoice' ? 'awaiting_invoice' : 'imported';
                         await this.prisma.orderMap.upsert({
                             where: { ttsOrderId: orderId },
                             update: {
                                 vtexOrderId,
-                                status: 'imported',
+                                status: orderStatus,
                                 lastError: null,
                                 shopId,
                             },
@@ -120,11 +146,25 @@ let OrdersService = OrdersService_1 = class OrdersService {
                                 ttsOrderId: orderId,
                                 shopId,
                                 vtexOrderId,
-                                status: 'imported',
+                                status: orderStatus,
                             },
                         });
-                        this.logger.info({ orderId, orderValue: orderDetails?.payment?.total }, 'Initiating label generation');
-                        await this.logisticsService.generateLabel(shopId, orderId, orderDetails?.payment?.total ?? 0);
+                        try {
+                            this.logger.info({ orderId, vtexOrderId }, 'Waiting before VTEX dispatch authorization');
+                            await (0, promises_1.setTimeout)(15_000);
+                            await this.vtexClient.authorizeDispatch(shopId, vtexOrderId);
+                            this.logger.info({ orderId, vtexOrderId }, 'VTEX dispatch authorized');
+                        }
+                        catch (authorizeError) {
+                            this.logger.error({ err: authorizeError, orderId, vtexOrderId }, 'Failed to authorize VTEX dispatch');
+                        }
+                        if (this.labelTrigger === 'invoice') {
+                            this.logger.info({ orderId, vtexOrderId }, 'Label generation deferred until invoice notification');
+                        }
+                        else {
+                            this.logger.info({ orderId, orderValue: orderDetails?.payment?.total }, 'Initiating label generation');
+                            await this.logisticsService.generateLabel(shopId, orderId, orderDetails?.payment?.total ?? 0);
+                        }
                         this.logger.info({ orderId, vtexOrderId }, 'TikTok order processed successfully after price fallback');
                         return;
                     }
@@ -168,13 +208,82 @@ let OrdersService = OrdersService_1 = class OrdersService {
     async getLabel(orderId) {
         return this.logisticsService.getLabel(orderId);
     }
+    scheduleVtexMarketplaceNotification(payload, shopId) {
+        setImmediate(() => {
+            this.handleVtexMarketplaceNotification(payload, shopId).catch((error) => {
+                this.logger.error({ err: error, shopId }, 'Failed to process VTEX marketplace notification');
+            });
+        });
+    }
+    async handleVtexMarketplaceNotification(payload, shopId) {
+        if (!payload || typeof payload !== 'object') {
+            this.logger.warn({ payload, shopId }, 'Received empty VTEX marketplace notification');
+            return;
+        }
+        if (payload.hookConfig === 'ping') {
+            this.logger.info({ shopId }, 'Received VTEX marketplace hook ping');
+            return;
+        }
+        const event = this.resolveMarketplaceEvent(payload);
+        const idempotencyKey = this.buildMarketplaceIdempotencyKey(event, payload, shopId);
+        await this.idempotency.register(idempotencyKey, payload, async () => {
+            const mapping = await this.resolveOrderMapping(event, shopId);
+            if (!mapping) {
+                this.logger.warn({ shopId, event, payload }, 'VTEX marketplace notification did not match any order mapping');
+                return;
+            }
+            const vtexOrderId = mapping.vtexOrderId ?? event.vtexOrderId;
+            if (!vtexOrderId) {
+                this.logger.warn({ shopId, event, ttsOrderId: mapping.ttsOrderId }, 'VTEX marketplace notification missing vtexOrderId');
+                return;
+            }
+            if (mapping.labelUrl) {
+                this.logger.info({ shopId, orderId: mapping.ttsOrderId, vtexOrderId }, 'Label already generated; skipping marketplace notification');
+                return;
+            }
+            const orderResponse = await this.vtexClient.getOrder(shopId, vtexOrderId);
+            const orderData = orderResponse.data ?? {};
+            const invoice = this.extractInvoiceData(orderData);
+            if (!invoice) {
+                this.logger.info({ shopId, orderId: mapping.ttsOrderId, vtexOrderId, status: event.status }, 'Marketplace notification received but no invoice found yet');
+                return;
+            }
+            await this.prisma.orderMap.update({
+                where: { ttsOrderId: mapping.ttsOrderId },
+                data: {
+                    status: 'invoiced',
+                    lastError: null,
+                    shopId,
+                },
+            });
+            const orderValue = this.resolveOrderValue(orderData);
+            this.logger.info({
+                shopId,
+                orderId: mapping.ttsOrderId,
+                vtexOrderId,
+                invoiceNumber: invoice?.number,
+            }, 'Generating label after invoice notification');
+            await this.logisticsService.generateLabel(shopId, mapping.ttsOrderId, orderValue, invoice ?? undefined);
+        });
+    }
     async buildVtexOrderPayload(order, shopId, options) {
         const items = Array.isArray(order?.line_items)
             ? order.line_items
             : Array.isArray(order?.items)
                 ? order.items
                 : [];
+        this.logger.info({
+            orderId: order?.id ?? order?.order_id,
+            lineItemsCount: items.length,
+            lineItems: items.map((item) => ({
+                sku_id: item?.sku_id,
+                product_id: item?.product_id,
+                seller_sku: item?.seller_sku,
+                quantity: item?.quantity,
+            })),
+        }, 'TikTok order line items snapshot');
         const mappedItems = [];
+        const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
         const toCents = (value) => {
             if (value === null || value === undefined) {
                 return 0;
@@ -194,28 +303,58 @@ let OrdersService = OrdersService_1 = class OrdersService {
             return Math.floor(numeric);
         };
         for (const item of items) {
-            const mapping = await this.prisma.productMap.findFirst({
-                where: {
-                    shopId,
-                    OR: [{ ttsSkuId: item.sku_id }, { ttsProductId: item.product_id }],
-                },
-            });
+            const ttsSkuId = item?.sku_id !== undefined && item?.sku_id !== null
+                ? String(item.sku_id)
+                : undefined;
+            const ttsProductId = item?.product_id !== undefined && item?.product_id !== null
+                ? String(item.product_id)
+                : undefined;
+            const sellerSku = item?.seller_sku !== undefined && item?.seller_sku !== null
+                ? String(item.seller_sku)
+                : undefined;
+            let mapping = ttsSkuId
+                ? await this.prisma.productMap.findFirst({
+                    where: { shopId, ttsSkuId },
+                })
+                : null;
+            if (!mapping && ttsProductId) {
+                const productMappings = await this.prisma.productMap.findMany({
+                    where: { shopId, ttsProductId },
+                });
+                if (productMappings.length === 1) {
+                    mapping = productMappings[0];
+                }
+                else if (productMappings.length > 1) {
+                    if (sellerSku) {
+                        mapping = productMappings.find((candidate) => candidate.vtexSkuId === sellerSku) ?? null;
+                    }
+                    if (!mapping) {
+                        this.logger.warn({
+                            shopId,
+                            ttsSkuId,
+                            ttsProductId,
+                            sellerSku,
+                            candidateVtexSkuIds: productMappings.map((candidate) => candidate.vtexSkuId),
+                        }, 'Ambiguous product mapping for TikTok item; skipping');
+                    }
+                }
+            }
             if (!mapping) {
-                if (item.seller_sku) {
-                    this.logger.info({ skuId: item.sku_id, sellerSku: item.seller_sku }, 'Mapping not found, trying to use seller_sku as VTEX ID');
+                if (sellerSku) {
+                    this.logger.info({ skuId: ttsSkuId, sellerSku }, 'Mapping not found, trying to use seller_sku as VTEX ID');
                     try {
                         await this.prisma.productMap.upsert({
-                            where: { vtexSkuId: item.seller_sku },
+                            where: { vtexSkuId: sellerSku },
                             update: {
-                                ttsSkuId: item.sku_id,
-                                ttsProductId: item.product_id,
+                                ttsSkuId: ttsSkuId ?? null,
+                                ttsProductId: ttsProductId ?? null,
                                 shopId,
                             },
                             create: {
                                 shopId,
-                                vtexSkuId: item.seller_sku,
-                                ttsSkuId: item.sku_id,
-                                ttsProductId: item.product_id,
+                                vtexSkuId: sellerSku,
+                                ttsSkuId: ttsSkuId ?? null,
+                                ttsProductId: ttsProductId ?? null,
                                 status: 'auto_mapped',
                             }
                         });
@@ -224,14 +363,14 @@ let OrdersService = OrdersService_1 = class OrdersService {
                         this.logger.warn({ err: e }, 'Failed to auto-create product mapping');
                     }
                     mappedItems.push({
-                        id: item.seller_sku,
+                        id: sellerSku,
                         quantity: normalizeQuantity(item.quantity),
                         seller: '1',
                         price: toCents(item.sale_price ?? item.original_price ?? item.price ?? 0),
                     });
                     continue;
                 }
-                this.logger.warn({ skuId: item.sku_id, productId: item.product_id }, 'Unable to find product mapping for TikTok item; skipping');
+                this.logger.warn({ skuId: ttsSkuId, productId: ttsProductId }, 'Unable to find product mapping for TikTok item; skipping');
                 continue;
             }
             mappedItems.push({
@@ -312,7 +451,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 country: address.country,
                 postalCodeRaw: rawPostalCode,
             }, 'Simulating order with VTEX');
-            simulation = await this.vtexClient.simulateOrder(mappedItems, address.postalCode, address.country);
+            simulation = await this.vtexClient.simulateOrder(shopId, mappedItems, address.postalCode, address.country);
             this.logger.info({ simulationResult: simulation.data }, 'VTEX Simulation Result');
             const logisticsEntries = Array.isArray(simulation.data?.logisticsInfo)
                 ? simulation.data.logisticsInfo
@@ -413,10 +552,30 @@ let OrdersService = OrdersService_1 = class OrdersService {
                 shippingEstimate,
                 lockTTL: '1bd',
             }));
+        const marketplaceServicesEndpoint = this.resolveMarketplaceServicesEndpoint(vtexConfig);
+        const paymentSystemId = vtexConfig.paymentSystemId ?? '201';
+        const paymentSystemName = vtexConfig.paymentSystemName;
+        const paymentGroup = vtexConfig.paymentGroup;
+        const paymentMerchant = vtexConfig.paymentMerchant;
+        const payment = {
+            paymentSystem: paymentSystemId,
+            installments: 1,
+            value: paymentTotalCents,
+            referenceValue: paymentTotalCents,
+        };
+        if (paymentSystemName) {
+            payment.paymentSystemName = paymentSystemName;
+        }
+        if (paymentGroup) {
+            payment.group = paymentGroup;
+        }
+        if (paymentMerchant) {
+            payment.merchantName = paymentMerchant;
+        }
         return [
             {
                 marketplaceOrderId: order?.id ?? order?.order_id,
-                marketplaceServicesEndpoint: 'TikTokShop',
+                marketplaceServicesEndpoint,
                 marketplacePaymentValue: paymentTotalCents,
                 items: pricedItems,
                 clientProfileData: {
@@ -430,15 +589,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     logisticsInfo,
                 },
                 paymentData: {
-                    payments: [
-                        {
-                            paymentSystem: '201',
-                            paymentSystemName: 'TikTok',
-                            group: 'creditCard',
-                            installments: 1,
-                            value: paymentTotalCents,
-                        },
-                    ],
+                    payments: [payment],
                 },
             }
         ];
@@ -766,6 +917,138 @@ let OrdersService = OrdersService_1 = class OrdersService {
         const secondDigit = calcDigit(digits.slice(0, 13), weights2);
         return digits[12] === firstDigit && digits[13] === secondDigit;
     }
+    resolveMarketplaceServicesEndpoint(vtexConfig) {
+        const explicit = vtexConfig.marketplaceServicesEndpoint;
+        if (explicit) {
+            return explicit;
+        }
+        const baseUrl = this.configService.get('PUBLIC_BASE_URL', { infer: true });
+        const token = vtexConfig.webhookToken;
+        if (baseUrl && token) {
+            return `${baseUrl.replace(/\/+$/, '')}/webhooks/vtex/marketplace/${token}`;
+        }
+        return baseUrl ?? 'TikTokShop';
+    }
+    resolveMarketplaceEvent(payload) {
+        const status = payload.status ??
+            payload.state ??
+            payload.currentState ??
+            payload.orderStatus ??
+            payload.workflowStatus ??
+            payload.data?.status ??
+            payload.data?.state ??
+            payload.data?.orderStatus;
+        const vtexOrderId = payload.orderId ??
+            payload.order_id ??
+            payload.vtexOrderId ??
+            payload.data?.orderId ??
+            payload.data?.order_id ??
+            payload.data?.vtexOrderId ??
+            payload.order?.orderId ??
+            payload.order?.id ??
+            payload.order?.order_id;
+        const marketplaceOrderId = payload.marketplaceOrderId ??
+            payload.marketplace_order_id ??
+            payload.data?.marketplaceOrderId ??
+            payload.data?.marketplace_order_id ??
+            payload.marketplace?.orderId ??
+            payload.marketplace?.order_id ??
+            payload.order?.marketplaceOrderId ??
+            payload.order?.marketplace_order_id;
+        return {
+            status: status ? String(status).trim().toLowerCase() : undefined,
+            vtexOrderId: vtexOrderId ? String(vtexOrderId) : undefined,
+            marketplaceOrderId: marketplaceOrderId ? String(marketplaceOrderId) : undefined,
+        };
+    }
+    buildMarketplaceIdempotencyKey(event, payload, shopId) {
+        const baseId = event.vtexOrderId ??
+            event.marketplaceOrderId ??
+            (payload?.id ? String(payload.id) : undefined) ??
+            (0, utils_1.createPayloadHash)(payload);
+        const status = event.status ?? 'unknown';
+        return `vtex-marketplace:${shopId}:${status}:${baseId}`;
+    }
+    async resolveOrderMapping(event, shopId) {
+        if (event.marketplaceOrderId) {
+            const mapping = await this.prisma.orderMap.findUnique({
+                where: { ttsOrderId: event.marketplaceOrderId },
+            });
+            if (mapping) {
+                return mapping;
+            }
+        }
+        if (event.vtexOrderId) {
+            const mapping = await this.prisma.orderMap.findFirst({
+                where: { vtexOrderId: event.vtexOrderId, shopId },
+            });
+            if (mapping) {
+                return mapping;
+            }
+        }
+        return null;
+    }
+    extractInvoiceData(order) {
+        if (!order || typeof order !== 'object') {
+            return null;
+        }
+        const candidates = [];
+        if (Array.isArray(order?.invoiceData?.invoices)) {
+            candidates.push(...order.invoiceData.invoices);
+        }
+        if (order?.invoiceData && typeof order.invoiceData === 'object') {
+            candidates.push(order.invoiceData);
+        }
+        if (Array.isArray(order?.packageAttachment?.packages)) {
+            candidates.push(...order.packageAttachment.packages);
+        }
+        if (order?.packageAttachment && typeof order.packageAttachment === 'object') {
+            candidates.push(order.packageAttachment);
+        }
+        if (order?.invoices && Array.isArray(order.invoices)) {
+            candidates.push(...order.invoices);
+        }
+        for (const candidate of candidates) {
+            if (!candidate || typeof candidate !== 'object')
+                continue;
+            const number = candidate.invoiceNumber ??
+                candidate.invoice_number ??
+                candidate.number ??
+                candidate.number_nf;
+            const key = candidate.invoiceKey ??
+                candidate.invoice_key ??
+                candidate.key ??
+                candidate.nfeKey;
+            const issuanceDate = candidate.issuanceDate ??
+                candidate.issuance_date ??
+                candidate.date;
+            const value = candidate.invoiceValue ?? candidate.value ?? candidate.total;
+            if (number || key) {
+                return {
+                    number: number ? String(number) : undefined,
+                    key: key ? String(key) : undefined,
+                    issuanceDate: issuanceDate ? String(issuanceDate) : undefined,
+                    value: Number.isFinite(Number(value)) ? Number(value) : undefined,
+                };
+            }
+        }
+        return null;
+    }
+    resolveOrderValue(order) {
+        const candidates = [
+            order?.value,
+            order?.totalValue,
+            order?.invoiceData?.totalValue,
+            order?.invoiceData?.invoiceValue,
+        ];
+        for (const candidate of candidates) {
+            const numeric = Number(candidate);
+            if (Number.isFinite(numeric) && numeric > 0) {
+                return numeric;
+            }
+        }
+        return 0;
+    }
 };
 exports.OrdersService = OrdersService;
 exports.OrdersService = OrdersService = OrdersService_1 = __decorate([
@@ -774,6 +1057,8 @@ exports.OrdersService = OrdersService = OrdersService_1 = __decorate([
         vtex_orders_client_1.VtexOrdersClient,
         idempotency_service_1.IdempotencyService,
         prisma_service_1.PrismaService,
+        config_1.ConfigService,
+        shop_config_service_1.ShopConfigService,
         logistics_service_1.LogisticsService,
         nestjs_pino_1.PinoLogger])
 ], OrdersService);

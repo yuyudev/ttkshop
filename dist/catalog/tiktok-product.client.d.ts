@@ -4,6 +4,7 @@ import { PinoLogger } from 'nestjs-pino';
 import { AppConfig } from '../common/config';
 import { TiktokShopService } from '../auth/tiktokshop.service';
 import { VtexProduct, VtexSkuImage, VtexSkuSummary } from './vtex-catalog.client';
+import { ShopConfigService } from '../common/shop-config.service';
 export interface TiktokProductInput {
     product: VtexProduct;
     skus: TiktokProductSkuInput[];
@@ -33,16 +34,11 @@ export declare class TiktokProductClient {
     private readonly http;
     private readonly configService;
     private readonly tiktokShopService;
+    private readonly shopConfigService;
     private readonly logger;
     private readonly openBase;
     private readonly appKey;
     private readonly appSecret;
-    private readonly shopCipher;
-    private readonly shopId?;
-    private readonly categoryId;
-    private readonly brandId?;
-    private readonly brandName?;
-    private readonly warehouseId;
     private readonly currency;
     private readonly saveMode;
     private readonly fallbackDescription;
@@ -55,7 +51,7 @@ export declare class TiktokProductClient {
     private readonly minimumOrderQuantity?;
     private readonly listingPlatforms?;
     private readonly imageUriCache;
-    constructor(http: HttpService, configService: ConfigService<AppConfig>, tiktokShopService: TiktokShopService, logger: PinoLogger);
+    constructor(http: HttpService, configService: ConfigService<AppConfig>, tiktokShopService: TiktokShopService, shopConfigService: ShopConfigService, logger: PinoLogger);
     createProduct(shopId: string, input: TiktokProductInput, options?: ProductPayloadOptions): Promise<TiktokProductResponse>;
     updateProduct(shopId: string, productId: string, input: TiktokProductInput, options?: ProductPayloadOptions): Promise<TiktokProductResponse>;
     updateStock(shopId: string, _warehouseId: string, ttsSkuId: string, availableQuantity: number, ttsProductId: string): Promise<void>;

@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 
 import { ApiKeyAuthGuard } from '../auth/auth.guard';
+import { ShopConfigService } from '../common/shop-config.service';
 import {
   OrderWebhookDto,
   TiktokWebhookDto,
@@ -21,7 +22,10 @@ import { OrdersService } from './orders.service';
 
 @Controller()
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) {}
+  constructor(
+    private readonly ordersService: OrdersService,
+    private readonly shopConfigService: ShopConfigService,
+  ) {}
 
   @Post('webhooks/tiktok/orders')
   @HttpCode(200)
@@ -50,5 +54,16 @@ export class OrdersController {
   @Get('orders/:ttsOrderId/label')
   async getLabel(@Param('ttsOrderId') orderId: string) {
     return this.ordersService.getLabel(orderId);
+  }
+
+  @Post('webhooks/vtex/marketplace/:token')
+  @HttpCode(200)
+  async handleVtexMarketplace(
+    @Param('token') token: string,
+    @Body() payload: any,
+  ) {
+    const shopId = await this.shopConfigService.resolveShopIdByVtexWebhookToken(token);
+    this.ordersService.scheduleVtexMarketplaceNotification(payload, shopId);
+    return { status: 'accepted' };
   }
 }

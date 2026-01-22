@@ -66,6 +66,31 @@ describe('Catalog Sync (e2e)', () => {
       .useValue(tiktokProductClientMock)
       .compile();
 
+    await prisma.tiktokAuth.upsert({
+      where: { shopId: 'shop123' },
+      create: {
+        shopId: 'shop123',
+        tiktokShopCipher: 'cipher-123',
+        tiktokWarehouseId: 'warehouse-1',
+        tiktokDefaultCategoryId: '600001',
+        vtexAccount: 'account',
+        vtexEnvironment: 'vtexcommercestable',
+        vtexAppKey: 'key',
+        vtexAppToken: 'token',
+        vtexWarehouseId: '1_1',
+      },
+      update: {
+        tiktokShopCipher: 'cipher-123',
+        tiktokWarehouseId: 'warehouse-1',
+        tiktokDefaultCategoryId: '600001',
+        vtexAccount: 'account',
+        vtexEnvironment: 'vtexcommercestable',
+        vtexAppKey: 'key',
+        vtexAppToken: 'token',
+        vtexWarehouseId: '1_1',
+      },
+    });
+
     app = moduleRef.createNestApplication();
     await app.init();
     catalogService = app.get(CatalogService);

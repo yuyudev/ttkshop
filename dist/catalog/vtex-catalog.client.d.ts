@@ -2,6 +2,7 @@ import { HttpService } from '@nestjs/axios';
 import { PinoLogger } from 'nestjs-pino';
 import { ConfigService } from '@nestjs/config';
 import { AppConfig } from '../common/config';
+import { ShopConfigService } from '../common/shop-config.service';
 export interface VtexSkuSummary {
     id: string;
     productId: string;
@@ -61,27 +62,25 @@ export interface VtexSkuImage {
 export declare class VtexCatalogClient {
     private readonly http;
     private readonly configService;
+    private readonly shopConfigService;
     private readonly logger;
-    private readonly account;
-    private readonly environment;
-    private readonly domainOverride?;
-    constructor(http: HttpService, configService: ConfigService<AppConfig>, logger: PinoLogger);
-    listSkus(updatedFrom?: string): Promise<VtexSkuSummary[]>;
+    constructor(http: HttpService, configService: ConfigService<AppConfig>, shopConfigService: ShopConfigService, logger: PinoLogger);
+    listSkus(shopId: string, updatedFrom?: string): Promise<VtexSkuSummary[]>;
     private fetchSkuPage;
-    getSkuInventory(skuId: string, warehouseId: string): Promise<number>;
-    getSkuById(skuId: string): Promise<VtexSkuSummary>;
-    getProductWithSkus(productId: string): Promise<any>;
-    searchProductWithItems(productId: string): Promise<any>;
-    getProductById(productId: string): Promise<VtexProduct>;
-    getPrice(skuId: string): Promise<number>;
-    setPrice(skuId: string, price: number): Promise<void>;
-    updateStock(skuId: string, warehouseId: string, quantity: number): Promise<{
+    getSkuInventory(shopId: string, skuId: string, warehouseId: string): Promise<number>;
+    getSkuById(shopId: string, skuId: string): Promise<VtexSkuSummary>;
+    getProductWithSkus(shopId: string, productId: string): Promise<any>;
+    searchProductWithItems(shopId: string, productId: string): Promise<any>;
+    getProductById(shopId: string, productId: string): Promise<VtexProduct>;
+    getPrice(shopId: string, skuId: string): Promise<number>;
+    setPrice(shopId: string, skuId: string, price: number): Promise<void>;
+    updateStock(shopId: string, skuId: string, warehouseId: string, quantity: number): Promise<{
         quantity: number;
     }>;
-    getSkuImages(skuId: string): Promise<VtexSkuImage[]>;
+    getSkuImages(shopId: string, skuId: string): Promise<VtexSkuImage[]>;
     private buildVtexImageUrl;
     private normalizeFileLocation;
-    private baseUrl;
-    private pricingBaseUrl;
-    private defaultHeaders;
+    private buildBaseUrl;
+    private buildPricingBaseUrl;
+    private buildDefaultHeaders;
 }

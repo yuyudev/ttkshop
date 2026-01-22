@@ -10,6 +10,7 @@ import { TiktokShopService } from '../auth/tiktokshop.service';
 import { buildSignedRequest } from '../common/signer';
 import { VtexProduct, VtexSkuImage, VtexSkuSummary } from './vtex-catalog.client';
 import * as FormData from 'form-data';
+import { ShopConfigService, TiktokCatalogConfig } from '../common/shop-config.service';
 
 export interface TiktokProductInput {
   product: VtexProduct;
@@ -45,12 +46,6 @@ export class TiktokProductClient {
   private readonly openBase: string;
   private readonly appKey: string;
   private readonly appSecret: string;
-  private readonly shopCipher: string;
-  private readonly shopId?: string;
-  private readonly categoryId: string;
-  private readonly brandId?: string;
-  private readonly brandName?: string;
-  private readonly warehouseId: string;
   private readonly currency: string;
   private readonly saveMode: string;
   private readonly fallbackDescription: string;
@@ -68,6 +63,7 @@ export class TiktokProductClient {
     private readonly http: HttpService,
     private readonly configService: ConfigService<AppConfig>,
     private readonly tiktokShopService: TiktokShopService,
+    private readonly shopConfigService: ShopConfigService,
     private readonly logger: PinoLogger,
   ) {
     this.openBase = this.normalizeBaseUrl(
@@ -75,16 +71,6 @@ export class TiktokProductClient {
     );
     this.appKey = this.configService.getOrThrow<string>('TIKTOK_APP_KEY', { infer: true });
     this.appSecret = this.configService.getOrThrow<string>('TIKTOK_APP_SECRET', { infer: true });
-    this.shopCipher = this.configService.getOrThrow<string>('TIKTOK_SHOP_CIPHER', { infer: true });
-    this.shopId = this.configService.get<string>('TIKTOK_SHOP_ID', { infer: true });
-    this.categoryId = this.configService.getOrThrow<string>('TIKTOK_DEFAULT_CATEGORY_ID', {
-      infer: true,
-    });
-    this.brandId = this.configService.get<string>('TIKTOK_BRAND_ID', { infer: true });
-    this.brandName = this.configService.get<string>('TIKTOK_BRAND_NAME', { infer: true });
-    this.warehouseId = this.configService.getOrThrow<string>('TIKTOK_WAREHOUSE_ID', {
-      infer: true,
-    });
     this.currency = this.configService.get<string>('TIKTOK_CURRENCY', { infer: true }) ?? 'BRL';
     this.saveMode =
       this.configService.get<string>('TIKTOK_SAVE_MODE', { infer: true }) ?? 'LISTING';
@@ -118,7 +104,14 @@ export class TiktokProductClient {
     options: ProductPayloadOptions = {},
   ): Promise<TiktokProductResponse> {
     return this.withTokenRetry(shopId, async (accessToken) => {
-      const payload = await this.buildProductPayload(shopId, accessToken, input, options);
+      const shopConfig = await this.shopConfigService.getTiktokCatalogConfig(shopId);
+      const payload = await this.buildProductPayload(
+        shopId,
+        accessToken,
+        input,
+        options,
+        shopConfig,
+      );
 
       this.logger.info(
         {
@@ -133,6 +126,10 @@ export class TiktokProductClient {
         '/product/202309/products',
         accessToken,
         payload,
+        {
+          shopCipher: shopConfig.shopCipher,
+          shopId,
+        },
       );
 
       const response = await firstValueFrom(this.http.post(url, body, { headers }));
@@ -172,10 +169,11 @@ export class TiktokProductClient {
     options: ProductPayloadOptions = {},
   ): Promise<TiktokProductResponse> {
     return this.withTokenRetry(shopId, async (accessToken) => {
+      const shopConfig = await this.shopConfigService.getTiktokCatalogConfig(shopId);
       const payload = await this.buildProductPayload(shopId, accessToken, input, {
         ...options,
         productId,
-      });
+      }, shopConfig);
 
       this.logger.info(
         {
@@ -191,6 +189,10 @@ export class TiktokProductClient {
         `/product/202309/products/${productId}`,
         accessToken,
         payload,
+        {
+          shopCipher: shopConfig.shopCipher,
+          shopId,
+        },
       );
 
       const response = await firstValueFrom(this.http.put(url, body, { headers }));
@@ -236,8 +238,9 @@ export class TiktokProductClient {
     ttsProductId: string,
   ): Promise<void> {
     await this.withTokenRetry(shopId, async (accessToken) => {
+      const shopConfig = await this.shopConfigService.getTiktokInventoryConfig(shopId);
       const inventoryItem = {
-        warehouse_id: this.warehouseId, // sempre o warehouse da TikTok, vindo do .env
+        warehouse_id: shopConfig.warehouseId, // sempre o warehouse da TikTok
         quantity: Math.max(0, Math.floor(availableQuantity)),
       };
 
@@ -254,6 +257,10 @@ export class TiktokProductClient {
         `/product/202309/products/${ttsProductId}/inventory/update`,
         accessToken,
         body,
+        {
+          shopCipher: shopConfig.shopCipher,
+          shopId,
+        },
       );
 
       const response = await firstValueFrom(
@@ -282,6 +289,8 @@ export class TiktokProductClient {
       extraParams?: Record<string, any>;
       includeShopCipher?: boolean;
       includeShopId?: boolean;
+      shopCipher?: string;
+      shopId?: string;
     } = {},
   ) {
     const headers: Record<string, string> = {
@@ -296,13 +305,13 @@ export class TiktokProductClient {
     };
 
     // shop_cipher por padrão (requisitado em vários endpoints de produto)
-    if (options.includeShopCipher !== false && this.shopCipher) {
-      qs.shop_cipher = this.shopCipher;
+    if (options.includeShopCipher !== false && options.shopCipher) {
+      qs.shop_cipher = options.shopCipher;
     }
 
     // shop_id opcional, mas costuma ser útil
-    if (options.includeShopId !== false && this.shopId) {
-      qs.shop_id = this.shopId;
+    if (options.includeShopId !== false && options.shopId) {
+      qs.shop_id = options.shopId;
     }
 
     return buildSignedRequest(this.openBase, path, this.appKey, this.appSecret, {
@@ -558,6 +567,7 @@ export class TiktokProductClient {
     accessToken: string,
     input: TiktokProductInput,
     options: ProductPayloadOptions = {},
+    shopConfig: TiktokCatalogConfig,
   ) {
     if (!input.skus.length) {
       throw new Error('Cannot build TikTok product payload without SKUs');
@@ -565,15 +575,15 @@ export class TiktokProductClient {
 
     const primarySku = input.skus[0];
     const brandId =
-      this.brandId ?? (input.product.BrandId ? String(input.product.BrandId) : undefined);
+      shopConfig.brandId ?? (input.product.BrandId ? String(input.product.BrandId) : undefined);
     const brandName =
-      this.brandName ??
+      shopConfig.brandName ??
       input.product.BrandName ??
       primarySku.sku.BrandName ??
       'Generic';
     const categoryId =
       options.categoryId ??
-      this.categoryId ??
+      shopConfig.defaultCategoryId ??
       (input.product.CategoryId ? String(input.product.CategoryId) : undefined);
 
     if (!categoryId) {
@@ -596,7 +606,7 @@ export class TiktokProductClient {
       );
       const inventory = [
         {
-          warehouse_id: this.warehouseId,
+          warehouse_id: shopConfig.warehouseId,
           quantity: Math.floor(quantity),
         },
       ];

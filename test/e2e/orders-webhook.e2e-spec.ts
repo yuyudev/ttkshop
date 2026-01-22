@@ -24,7 +24,7 @@ describe('TikTok Orders Webhook (e2e)', () => {
             { sku_id: 'sku-001', product_id: 'prod-001', quantity: 1, price: 1000 },
           ],
           buyer: { first_name: 'Alice', last_name: 'Doe', email: 'alice@example.com' },
-          shipping_address: { street: 'Rua A', city: 'São Paulo' },
+          shipping_address: { street: 'Rua A', city: 'São Paulo', postal_code: '01001000' },
           payment: { total: 1000 },
         },
       },
@@ -33,6 +33,30 @@ describe('TikTok Orders Webhook (e2e)', () => {
 
   const vtexOrdersClientMock = {
     createOrder: jest.fn().mockResolvedValue({ data: { orderId: 'vtex-001' } }),
+    simulateOrder: jest.fn().mockResolvedValue({
+      data: {
+        logisticsInfo: [
+          {
+            slas: [
+              {
+                id: 'STANDARD',
+                price: 0,
+                shippingEstimate: '10d',
+                lockTTL: '1bd',
+              },
+            ],
+          },
+        ],
+        items: [
+          {
+            id: 'sku-001',
+            price: 1000,
+            sellingPrice: 1000,
+            priceTags: [],
+          },
+        ],
+      },
+    }),
   };
 
   const logisticsServiceMock = {
@@ -55,6 +79,33 @@ describe('TikTok Orders Webhook (e2e)', () => {
       .overrideProvider(LogisticsService)
       .useValue(logisticsServiceMock)
       .compile();
+
+    await prisma.tiktokAuth.upsert({
+      where: { shopId: 'shop123' },
+      create: {
+        shopId: 'shop123',
+        tiktokShopCipher: 'cipher-123',
+        tiktokWarehouseId: 'warehouse-1',
+        tiktokDefaultCategoryId: '600001',
+        vtexAccount: 'account',
+        vtexEnvironment: 'vtexcommercestable',
+        vtexAppKey: 'key',
+        vtexAppToken: 'token',
+        vtexWarehouseId: '1_1',
+        vtexSalesChannel: '1',
+      },
+      update: {
+        tiktokShopCipher: 'cipher-123',
+        tiktokWarehouseId: 'warehouse-1',
+        tiktokDefaultCategoryId: '600001',
+        vtexAccount: 'account',
+        vtexEnvironment: 'vtexcommercestable',
+        vtexAppKey: 'key',
+        vtexAppToken: 'token',
+        vtexWarehouseId: '1_1',
+        vtexSalesChannel: '1',
+      },
+    });
 
     await prisma.productMap.upsert({
       where: { vtexSkuId: 'sku-001' },

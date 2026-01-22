@@ -39,7 +39,7 @@ let CatalogScheduler = CatalogScheduler_1 = class CatalogScheduler {
     }
     async syncAllProducts(shopId, startProductId) {
         this.logger.info({ shopId }, 'Starting full catalog sync');
-        const skuSummaries = await this.vtexClient.listSkus();
+        const skuSummaries = await this.vtexClient.listSkus(shopId);
         if (!skuSummaries.length) {
             this.logger.warn({ shopId }, 'VTEX listSkus returned no products; aborting');
             return;

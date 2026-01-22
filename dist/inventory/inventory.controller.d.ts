@@ -1,11 +1,10 @@
-import { ConfigService } from '@nestjs/config';
 import { InventoryService } from './inventory.service';
 import { InventorySyncDto } from '../common/dto';
-import { AppConfig } from '../common/config';
+import { ShopConfigService } from '../common/shop-config.service';
 export declare class InventoryController {
     private readonly inventoryService;
-    private readonly configService;
-    constructor(inventoryService: InventoryService, configService: ConfigService<AppConfig>);
+    private readonly shopConfigService;
+    constructor(inventoryService: InventoryService, shopConfigService: ShopConfigService);
     handleVtexWebhook(payload: any): Promise<{
         status: string;
     }>;

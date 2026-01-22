@@ -24,7 +24,7 @@ let LogisticsService = LogisticsService_1 = class LogisticsService {
         this.logger = logger;
         this.logger.setContext(LogisticsService_1.name);
     }
-    async generateLabel(shopId, orderId, orderValue) {
+    async generateLabel(shopId, orderId, orderValue, invoice) {
         this.logger.info({ shopId, orderId, orderValue }, 'Generating shipping label');
         const mapping = await this.prisma.orderMap.findUnique({
             where: { ttsOrderId: orderId },
@@ -56,7 +56,7 @@ let LogisticsService = LogisticsService_1 = class LogisticsService {
                     'TikTok Shipping';
                 if (trackingNumber) {
                     this.logger.info({ orderId, vtexOrderId: mapping.vtexOrderId, trackingNumber, provider }, 'Updating VTEX with tracking info');
-                    await this.updateVtexTracking(mapping.vtexOrderId, trackingNumber, provider, orderValue ?? 0);
+                    await this.updateVtexTracking(mapping.shopId, mapping.vtexOrderId, trackingNumber, provider, orderValue ?? 0, invoice);
                     this.logger.info({ orderId, vtexOrderId: mapping.vtexOrderId }, 'Updated VTEX tracking');
                 }
                 else {
@@ -73,17 +73,23 @@ let LogisticsService = LogisticsService_1 = class LogisticsService {
             document: response.data?.data ?? response.data,
         };
     }
-    async updateVtexTracking(vtexOrderId, trackingNumber, courier, value) {
+    async updateVtexTracking(shopId, vtexOrderId, trackingNumber, courier, value, invoice) {
+        const invoiceNumber = invoice?.number ?? `TTS-${trackingNumber.slice(-5)}`;
+        const issuanceDate = invoice?.issuanceDate ?? new Date().toISOString().split('T')[0];
+        const invoiceValue = Number.isFinite(Number(invoice?.value)) ? Number(invoice?.value) : value;
         const invoiceData = {
             type: 'Output',
-            invoiceNumber: `TTS-${trackingNumber.slice(-5)}`,
-            issuanceDate: new Date().toISOString().split('T')[0],
-            invoiceValue: value,
+            invoiceNumber,
+            issuanceDate,
+            invoiceValue,
             trackingNumber,
             courier,
             items: [],
         };
-        return this.vtexOrdersClient.updateTracking(vtexOrderId, invoiceData);
+        if (invoice?.key) {
+            invoiceData.invoiceKey = invoice.key;
+        }
+        return this.vtexOrdersClient.updateTracking(shopId, vtexOrderId, invoiceData);
     }
     async getLabel(orderId) {
         const mapping = await this.prisma.orderMap.findUnique({

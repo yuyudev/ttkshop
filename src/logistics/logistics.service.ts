@@ -5,6 +5,13 @@ import { PrismaService } from '../prisma/prisma.service';
 import { TiktokLogisticsClient } from './tiktok-logistics.client';
 import { VtexOrdersClient } from '../orders/vtex-orders.client';
 
+type InvoiceMetadata = {
+  number?: string;
+  value?: number;
+  key?: string;
+  issuanceDate?: string;
+};
+
 @Injectable()
 export class LogisticsService {
   constructor(
@@ -16,7 +23,12 @@ export class LogisticsService {
     this.logger.setContext(LogisticsService.name);
   }
 
-  async generateLabel(shopId: string, orderId: string, orderValue?: number) {
+  async generateLabel(
+    shopId: string,
+    orderId: string,
+    orderValue?: number,
+    invoice?: InvoiceMetadata,
+  ) {
     this.logger.info({ shopId, orderId, orderValue }, 'Generating shipping label');
 
     const mapping = await this.prisma.orderMap.findUnique({
@@ -59,10 +71,12 @@ export class LogisticsService {
         if (trackingNumber) {
           this.logger.info({ orderId, vtexOrderId: mapping.vtexOrderId, trackingNumber, provider }, 'Updating VTEX with tracking info');
           await this.updateVtexTracking(
+            mapping.shopId,
             mapping.vtexOrderId,
             trackingNumber,
             provider,
             orderValue ?? 0,
+            invoice,
           );
           this.logger.info({ orderId, vtexOrderId: mapping.vtexOrderId }, 'Updated VTEX tracking');
         } else {
@@ -81,21 +95,34 @@ export class LogisticsService {
   }
 
   private async updateVtexTracking(
+    shopId: string,
     vtexOrderId: string,
     trackingNumber: string,
     courier: string,
     value: number,
+    invoice?: InvoiceMetadata,
   ) {
+    const invoiceNumber =
+      invoice?.number ?? `TTS-${trackingNumber.slice(-5)}`;
+    const issuanceDate =
+      invoice?.issuanceDate ?? new Date().toISOString().split('T')[0];
+    const invoiceValue =
+      Number.isFinite(Number(invoice?.value)) ? Number(invoice?.value) : value;
+
     const invoiceData = {
       type: 'Output',
-      invoiceNumber: `TTS-${trackingNumber.slice(-5)}`,
-      issuanceDate: new Date().toISOString().split('T')[0],
-      invoiceValue: value,
+      invoiceNumber,
+      issuanceDate,
+      invoiceValue,
       trackingNumber,
       courier,
       items: [], // VTEX allows empty items for simple invoice
     };
-    return this.vtexOrdersClient.updateTracking(vtexOrderId, invoiceData);
+
+    if (invoice?.key) {
+      (invoiceData as any).invoiceKey = invoice.key;
+    }
+    return this.vtexOrdersClient.updateTracking(shopId, vtexOrderId, invoiceData);
   }
 
   async getLabel(orderId: string) {

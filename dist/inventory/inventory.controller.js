@@ -14,28 +14,23 @@ var __param = (this && this.__param) || function (paramIndex, decorator) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.InventoryController = void 0;
 const common_1 = require("@nestjs/common");
-const config_1 = require("@nestjs/config");
 const swagger_1 = require("@nestjs/swagger");
 const auth_guard_1 = require("../auth/auth.guard");
 const inventory_service_1 = require("./inventory.service");
 const dto_1 = require("../common/dto");
+const shop_config_service_1 = require("../common/shop-config.service");
 let InventoryController = class InventoryController {
-    constructor(inventoryService, configService) {
+    constructor(inventoryService, shopConfigService) {
         this.inventoryService = inventoryService;
-        this.configService = configService;
+        this.shopConfigService = shopConfigService;
     }
     async handleVtexWebhook(payload) {
         this.inventoryService.scheduleVtexInventory(payload);
         return { status: 'accepted' };
     }
     async handleVtexNotification(token, payload) {
-        const expectedToken = this.configService.getOrThrow('VTEX_WEBHOOK_TOKEN', {
-            infer: true,
-        });
-        if (token !== expectedToken) {
-            throw new common_1.UnauthorizedException('Invalid VTEX webhook token');
-        }
-        this.inventoryService.scheduleVtexNotification(payload);
+        const shopId = await this.shopConfigService.resolveShopIdByVtexWebhookToken(token);
+        this.inventoryService.scheduleVtexNotification(payload, shopId);
         return { status: 'accepted' };
     }
     async manualSync(shopId, payload) {
@@ -82,6 +77,6 @@ exports.InventoryController = InventoryController = __decorate([
     }),
     (0, common_1.Controller)(),
     __metadata("design:paramtypes", [inventory_service_1.InventoryService,
-        config_1.ConfigService])
+        shop_config_service_1.ShopConfigService])
 ], InventoryController);
 //# sourceMappingURL=inventory.controller.js.map

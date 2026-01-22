@@ -15,21 +15,6 @@ export const configSchema = z.object({
   TIKTOK_BASE_AUTH: z.string().url('TIKTOK_BASE_AUTH must be a valid URL'),
   TIKTOK_BASE_OPEN: z.string().url('TIKTOK_BASE_OPEN must be a valid URL'),
   TIKTOK_BASE_SERV: z.string().url('TIKTOK_BASE_SERV must be a valid URL'),
-  TIKTOK_SHOP_CIPHER: z.string().min(1, 'TIKTOK_SHOP_CIPHER is required'),
-  TIKTOK_SHOP_ID: z
-    .string()
-    .optional()
-    .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
-  TIKTOK_DEFAULT_CATEGORY_ID: z.string().min(1, 'TIKTOK_DEFAULT_CATEGORY_ID is required'),
-  TIKTOK_BRAND_ID: z
-    .string()
-    .optional()
-    .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
-  TIKTOK_BRAND_NAME: z
-    .string()
-    .optional()
-    .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
-  TIKTOK_WAREHOUSE_ID: z.string().min(1, 'TIKTOK_WAREHOUSE_ID is required'),
   TIKTOK_CURRENCY: z
     .string()
     .min(3)
@@ -98,47 +83,6 @@ export const configSchema = z.object({
           .filter(Boolean)
         : undefined,
     ),
-  VTEX_ACCOUNT: z.string().min(1, 'VTEX_ACCOUNT is required'),
-  VTEX_ENVIRONMENT: z
-    .string()
-    .min(1, 'VTEX_ENVIRONMENT is required')
-    .default('vtexcommercestable'),
-  VTEX_DOMAIN: z
-    .string()
-    .optional()
-    .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
-  VTEX_APP_KEY: z.string().min(1, 'VTEX_APP_KEY is required'),
-  VTEX_APP_TOKEN: z.string().min(1, 'VTEX_APP_TOKEN is required'),
-  VTEX_AFFILIATE_ID: z
-    .string()
-    .optional()
-    .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
-  VTEX_MARKETPLACE_SERVICES_ENDPOINT: z
-    .string()
-    .optional()
-    .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
-  VTEX_PAYMENT_SYSTEM_ID: z
-    .string()
-    .optional()
-    .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
-  VTEX_PAYMENT_SYSTEM_NAME: z
-    .string()
-    .optional()
-    .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
-  VTEX_PAYMENT_GROUP: z
-    .string()
-    .optional()
-    .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
-  VTEX_PAYMENT_MERCHANT: z
-    .string()
-    .optional()
-    .transform((value) => (value && value.trim().length > 0 ? value.trim() : undefined)),
-  VTEX_WAREHOUSE_ID: z
-    .string()
-    .optional()
-    .transform((value) => (value && value.trim().length > 0 ? value.trim() : '1_1')),
-  VTEX_WEBHOOK_TOKEN: z.string().min(1, 'VTEX_WEBHOOK_TOKEN is required'),
-  VTEX_SALES_CHANNEL: z.string().optional().default('1'),
   PUBLIC_BASE_URL: z.string().url('PUBLIC_BASE_URL must be a valid URL'),
   TTS_REDIRECT_PATH: z.string().min(1, 'TTS_REDIRECT_PATH is required'),
   MIDDLEWARE_API_KEY: z.string().min(1, 'MIDDLEWARE_API_KEY is required'),
@@ -161,6 +105,7 @@ export const configSchema = z.object({
     .refine((value) => Number.isFinite(value) && value >= 0, {
       message: 'HTTP_MAX_RETRIES must be a non-negative integer',
     }),
+  TTS_LABEL_TRIGGER: z.enum(['immediate', 'invoice']).default('immediate'),
   VTEX_PAGE_SIZE: z
     .string()
     .optional()

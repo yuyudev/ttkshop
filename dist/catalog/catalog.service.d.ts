@@ -1,20 +1,20 @@
 import { PinoLogger } from 'nestjs-pino';
-import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../prisma/prisma.service';
 import { CatalogSyncDto } from '../common/dto';
 import { VtexCatalogClient } from './vtex-catalog.client';
 import { TiktokProductClient } from './tiktok-product.client';
 import { CategoryMappingService } from './category-mapping.service';
+import { ShopConfigService } from '../common/shop-config.service';
 export declare class CatalogService {
     private readonly vtexClient;
     private readonly tiktokClient;
     private readonly prisma;
     private readonly logger;
-    private readonly configService;
     private readonly categoryMappingService;
+    private readonly shopConfigService;
     private readonly MAX_SKUS_PER_RUN;
     private readonly productSkuCache;
-    constructor(vtexClient: VtexCatalogClient, tiktokClient: TiktokProductClient, prisma: PrismaService, logger: PinoLogger, configService: ConfigService, categoryMappingService: CategoryMappingService);
+    constructor(vtexClient: VtexCatalogClient, tiktokClient: TiktokProductClient, prisma: PrismaService, logger: PinoLogger, categoryMappingService: CategoryMappingService, shopConfigService: ShopConfigService);
     syncCatalog(shopId: string, input: CatalogSyncDto): Promise<{
         processed: number;
         synced: number;

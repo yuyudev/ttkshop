@@ -1,8 +1,8 @@
-import { ConfigService } from '@nestjs/config';
 import { PinoLogger } from 'nestjs-pino';
 import { PrismaService } from '../prisma/prisma.service';
 import { VtexProduct } from './vtex-catalog.client';
 import { CategoryAiService } from './category-ai.service';
+import { ShopConfigService } from '../common/shop-config.service';
 type CategoryResolutionSource = 'mapping' | 'ai' | 'fallback';
 export interface CategoryResolution {
     categoryId: string;
@@ -10,11 +10,11 @@ export interface CategoryResolution {
 }
 export declare class CategoryMappingService {
     private readonly prisma;
-    private readonly configService;
     private readonly logger;
     private readonly aiService;
-    constructor(prisma: PrismaService, configService: ConfigService, logger: PinoLogger, aiService: CategoryAiService);
-    resolveCategory(product: VtexProduct): Promise<CategoryResolution>;
+    private readonly shopConfigService;
+    constructor(prisma: PrismaService, logger: PinoLogger, aiService: CategoryAiService, shopConfigService: ShopConfigService);
+    resolveCategory(product: VtexProduct, shopId: string): Promise<CategoryResolution>;
     private extractVtexCategoryId;
 }
 export {};
