@@ -1,7 +1,6 @@
 import { Injectable } from '@nestjs/common';
 import { isAxiosError } from 'axios';
 import { PinoLogger } from 'nestjs-pino';
-import { ConfigService } from '@nestjs/config';
 
 import { PrismaService } from '../prisma/prisma.service';
 import { CatalogSyncDto } from '../common/dto';
@@ -18,6 +17,7 @@ import {
   TiktokProductSkuInput,
 } from './tiktok-product.client';
 import { CategoryMappingService } from './category-mapping.service';
+import { ShopConfigService } from '../common/shop-config.service';
 
 type ProductMapRecord = {
   vtexSkuId: string;
@@ -37,8 +37,8 @@ export class CatalogService {
     private readonly tiktokClient: TiktokProductClient,
     private readonly prisma: PrismaService,
     private readonly logger: PinoLogger,
-    private readonly configService: ConfigService,
     private readonly categoryMappingService: CategoryMappingService,
+    private readonly shopConfig: ShopConfigService,
   ) {
     this.logger.setContext(CatalogService.name);
   }
@@ -51,7 +51,7 @@ export class CatalogService {
    * - Usa um helper que faz o sync de 1 SKU (ótimo p/ cron reaproveitar depois)
    */
   async syncCatalog(shopId: string, input: CatalogSyncDto) {
-    const skuSummaries = await this.vtexClient.listSkus(input.updatedFrom);
+    const skuSummaries = await this.vtexClient.listSkus(shopId, input.updatedFrom);
     const processedSkuIds = new Set<string>();
     const productGroups = new Map<string, string[]>();
 
@@ -72,7 +72,7 @@ export class CatalogService {
       const skuId = String(id);
       if (!skuId) continue;
 
-      const sku = await this.vtexClient.getSkuById(skuId);
+      const sku = await this.vtexClient.getSkuById(shopId, skuId);
       const productId = this.extractProductId(sku);
       if (!productId) continue;
 
@@ -126,13 +126,13 @@ export class CatalogService {
     let productId: string | null = null;
 
     try {
-      const sku = await this.vtexClient.getSkuById(vtexSkuId);
+      const sku = await this.vtexClient.getSkuById(shopId, vtexSkuId);
       productId = this.extractProductId(sku);
       if (!productId) {
         throw new Error('VTEX SKU did not include productId');
       }
 
-      const product = await this.vtexClient.getProductById(productId);
+      const product = await this.vtexClient.getProductById(shopId, productId);
       relatedSkuIds = await this.getSkuIdsForProduct(productId, vtexSkuId);
 
       if (
@@ -226,16 +226,16 @@ export class CatalogService {
       );
 
       const skuInputs: TiktokProductSkuInput[] = [];
-      const vtexWarehouseId =
-        this.configService.get<string>('VTEX_WAREHOUSE_ID', { infer: true }) ?? '1_1';
+      const vtexConfig = await this.shopConfig.resolveVtexConfig(shopId);
+      const vtexWarehouseId = vtexConfig.warehouseId ?? '1_1';
 
       for (const skuId of relatedSkuIds) {
         const skuDetails =
-          skuId === vtexSkuId ? sku : await this.vtexClient.getSkuById(skuId);
+          skuId === vtexSkuId ? sku : await this.vtexClient.getSkuById(shopId, skuId);
 
-        const price = await this.vtexClient.getPrice(skuId);
-        const images = await this.fetchImagesSafely(skuId);
-        const quantity = await this.vtexClient.getSkuInventory(skuId, vtexWarehouseId);
+        const price = await this.vtexClient.getPrice(shopId, skuId);
+        const images = await this.fetchImagesSafely(shopId, skuId);
+        const quantity = await this.vtexClient.getSkuInventory(shopId, skuId, vtexWarehouseId);
 
         const mapping = mappingBySkuId.get(skuId);
 
@@ -314,7 +314,7 @@ export class CatalogService {
       let categorySource = categoryFromMappings ? 'mapping' : 'fallback';
 
       if (!resolvedCategoryId) {
-        const categoryResolution = await this.categoryMappingService.resolveCategory(product);
+        const categoryResolution = await this.categoryMappingService.resolveCategory(shopId, product);
         resolvedCategoryId = categoryResolution.categoryId;
         categorySource = categoryResolution.source;
       }
@@ -429,7 +429,12 @@ export class CatalogService {
           null;
 
         await this.prisma.productMap.upsert({
-          where: { vtexSkuId: skuInput.vtexSkuId },
+          where: {
+            shopId_vtexSkuId: {
+              shopId,
+              vtexSkuId: skuInput.vtexSkuId,
+            },
+          },
           update: {
             status: 'synced',
             lastError: null,
@@ -505,7 +510,12 @@ export class CatalogService {
         processedSkuIds.add(skuId);
 
         await this.prisma.productMap.upsert({
-          where: { vtexSkuId: skuId },
+          where: {
+            shopId_vtexSkuId: {
+              shopId,
+              vtexSkuId: skuId,
+            },
+          },
           update: {
             status: 'error',
             lastError: message,
@@ -592,7 +602,7 @@ export class CatalogService {
     let relatedSkuIds: string[] = [];
 
     try {
-      const productSkusPayload = await this.vtexClient.getProductWithSkus(productId);
+      const productSkusPayload = await this.vtexClient.getProductWithSkus(shopId, productId);
       relatedSkuIds = this.normalizeProductSkuIds(productSkusPayload);
     } catch (error) {
       if (this.isNotFoundError(error)) {
@@ -608,7 +618,7 @@ export class CatalogService {
 
     if (!relatedSkuIds.length) {
       try {
-        const searchPayload = await this.vtexClient.searchProductWithItems(productId);
+        const searchPayload = await this.vtexClient.searchProductWithItems(shopId, productId);
         relatedSkuIds = this.extractSkuIdsFromSearchPayload(searchPayload);
       } catch (error) {
         if (this.isNotFoundError(error)) {
@@ -741,9 +751,12 @@ export class CatalogService {
     return undefined;
   }
 
-  private async fetchImagesSafely(skuId: string): Promise<VtexSkuImage[]> {
+  private async fetchImagesSafely(
+    shopId: string,
+    skuId: string,
+  ): Promise<VtexSkuImage[]> {
     try {
-      return await this.vtexClient.getSkuImages(String(skuId));
+      return await this.vtexClient.getSkuImages(shopId, String(skuId));
     } catch (error) {
       if (this.isNotFoundError(error)) {
         this.logger.warn(

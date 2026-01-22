@@ -9,13 +9,12 @@ import {
   UnauthorizedException,
   UseGuards,
 } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { ApiHeader, ApiSecurity } from '@nestjs/swagger';
 
 import { ApiKeyAuthGuard } from '../auth/auth.guard';
 import { InventoryService } from './inventory.service';
 import { InventorySyncDto, ZodValidationPipe, inventorySyncSchema } from '../common/dto';
-import { AppConfig } from '../common/config';
+import { ShopConfigService } from '../common/shop-config.service';
 
 @ApiSecurity('middlewareApiKey')
 @ApiHeader({
@@ -27,7 +26,7 @@ import { AppConfig } from '../common/config';
 export class InventoryController {
   constructor(
     private readonly inventoryService: InventoryService,
-    private readonly configService: ConfigService<AppConfig>,
+    private readonly shopConfig: ShopConfigService,
   ) { }
 
   @UseGuards(ApiKeyAuthGuard)
@@ -46,10 +45,8 @@ export class InventoryController {
     @Param('token') token: string,
     @Body() payload: any,
   ) {
-    const expectedToken = this.configService.getOrThrow<string>('VTEX_WEBHOOK_TOKEN', {
-      infer: true,
-    });
-    if (token !== expectedToken) {
+    const isValid = await this.shopConfig.isValidVtexWebhookToken(token);
+    if (!isValid) {
       throw new UnauthorizedException('Invalid VTEX webhook token');
     }
     this.inventoryService.scheduleVtexNotification(payload);

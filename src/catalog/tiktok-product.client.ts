@@ -1,15 +1,14 @@
 // src/catalog/tiktok-product.client.ts
 import { HttpService } from '@nestjs/axios';
 import { Injectable } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
 import { firstValueFrom } from 'rxjs';
 import { PinoLogger } from 'nestjs-pino';
 
-import { AppConfig } from '../common/config';
 import { TiktokShopService } from '../auth/tiktokshop.service';
 import { buildSignedRequest } from '../common/signer';
 import { VtexProduct, VtexSkuImage, VtexSkuSummary } from './vtex-catalog.client';
 import * as FormData from 'form-data';
+import { ShopConfigService, TiktokCatalogConfig } from '../common/shop-config.service';
 
 export interface TiktokProductInput {
   product: VtexProduct;
@@ -42,73 +41,14 @@ interface ProductPayloadOptions {
 
 @Injectable()
 export class TiktokProductClient {
-  private readonly openBase: string;
-  private readonly appKey: string;
-  private readonly appSecret: string;
-  private readonly shopCipher: string;
-  private readonly shopId?: string;
-  private readonly categoryId: string;
-  private readonly brandId?: string;
-  private readonly brandName?: string;
-  private readonly warehouseId: string;
-  private readonly currency: string;
-  private readonly saveMode: string;
-  private readonly fallbackDescription: string;
-  private readonly packageWeight?: number;
-  private readonly packageWeightUnit: string;
-  private readonly packageLength?: number;
-  private readonly packageWidth?: number;
-  private readonly packageHeight?: number;
-  private readonly packageDimensionUnit: string;
-  private readonly minimumOrderQuantity?: number;
-  private readonly listingPlatforms?: string[];
   private readonly imageUriCache = new Map<string, string>();
 
   constructor(
     private readonly http: HttpService,
-    private readonly configService: ConfigService<AppConfig>,
     private readonly tiktokShopService: TiktokShopService,
+    private readonly shopConfig: ShopConfigService,
     private readonly logger: PinoLogger,
   ) {
-    this.openBase = this.normalizeBaseUrl(
-      this.configService.getOrThrow<string>('TIKTOK_BASE_OPEN', { infer: true }),
-    );
-    this.appKey = this.configService.getOrThrow<string>('TIKTOK_APP_KEY', { infer: true });
-    this.appSecret = this.configService.getOrThrow<string>('TIKTOK_APP_SECRET', { infer: true });
-    this.shopCipher = this.configService.getOrThrow<string>('TIKTOK_SHOP_CIPHER', { infer: true });
-    this.shopId = this.configService.get<string>('TIKTOK_SHOP_ID', { infer: true });
-    this.categoryId = this.configService.getOrThrow<string>('TIKTOK_DEFAULT_CATEGORY_ID', {
-      infer: true,
-    });
-    this.brandId = this.configService.get<string>('TIKTOK_BRAND_ID', { infer: true });
-    this.brandName = this.configService.get<string>('TIKTOK_BRAND_NAME', { infer: true });
-    this.warehouseId = this.configService.getOrThrow<string>('TIKTOK_WAREHOUSE_ID', {
-      infer: true,
-    });
-    this.currency = this.configService.get<string>('TIKTOK_CURRENCY', { infer: true }) ?? 'BRL';
-    this.saveMode =
-      this.configService.get<string>('TIKTOK_SAVE_MODE', { infer: true }) ?? 'LISTING';
-    this.fallbackDescription =
-      this.configService.get<string>('TIKTOK_DESCRIPTION_FALLBACK', { infer: true }) ??
-      'No description provided.';
-    this.packageWeight = this.configService.get<number>('TIKTOK_PACKAGE_WEIGHT', { infer: true });
-    this.packageWeightUnit =
-      this.configService.get<string>('TIKTOK_PACKAGE_WEIGHT_UNIT', { infer: true }) ?? 'KILOGRAM';
-    this.packageLength = this.configService.get<number>('TIKTOK_PACKAGE_LENGTH', { infer: true });
-    this.packageWidth = this.configService.get<number>('TIKTOK_PACKAGE_WIDTH', { infer: true });
-    this.packageHeight = this.configService.get<number>('TIKTOK_PACKAGE_HEIGHT', { infer: true });
-    this.packageDimensionUnit =
-      this.configService.get<string>('TIKTOK_PACKAGE_DIMENSION_UNIT', { infer: true }) ??
-      'CENTIMETER';
-    this.minimumOrderQuantity = this.configService.get<number>(
-      'TIKTOK_MINIMUM_ORDER_QUANTITY',
-      { infer: true },
-    );
-    const listingPlatforms = this.configService.get<string[]>(
-      'TIKTOK_LISTING_PLATFORMS',
-      { infer: true },
-    );
-    this.listingPlatforms = Array.isArray(listingPlatforms) ? listingPlatforms : undefined;
     this.logger.setContext(TiktokProductClient.name);
   }
 
@@ -118,7 +58,13 @@ export class TiktokProductClient {
     options: ProductPayloadOptions = {},
   ): Promise<TiktokProductResponse> {
     return this.withTokenRetry(shopId, async (accessToken) => {
-      const payload = await this.buildProductPayload(shopId, accessToken, input, options);
+      const catalogConfig = await this.shopConfig.resolveTiktokCatalogConfig(shopId);
+      const payload = await this.buildProductPayload(
+        catalogConfig,
+        shopId,
+        input,
+        options,
+      );
 
       this.logger.info(
         {
@@ -130,6 +76,7 @@ export class TiktokProductClient {
       );
 
       const { url, headers, body } = this.buildSignedOpenApiRequest(
+        catalogConfig,
         '/product/202309/products',
         accessToken,
         payload,
@@ -172,10 +119,16 @@ export class TiktokProductClient {
     options: ProductPayloadOptions = {},
   ): Promise<TiktokProductResponse> {
     return this.withTokenRetry(shopId, async (accessToken) => {
-      const payload = await this.buildProductPayload(shopId, accessToken, input, {
-        ...options,
-        productId,
-      });
+      const catalogConfig = await this.shopConfig.resolveTiktokCatalogConfig(shopId);
+      const payload = await this.buildProductPayload(
+        catalogConfig,
+        shopId,
+        input,
+        {
+          ...options,
+          productId,
+        },
+      );
 
       this.logger.info(
         {
@@ -188,6 +141,7 @@ export class TiktokProductClient {
       );
 
       const { url, headers, body } = this.buildSignedOpenApiRequest(
+        catalogConfig,
         `/product/202309/products/${productId}`,
         accessToken,
         payload,
@@ -236,8 +190,9 @@ export class TiktokProductClient {
     ttsProductId: string,
   ): Promise<void> {
     await this.withTokenRetry(shopId, async (accessToken) => {
+      const catalogConfig = await this.shopConfig.resolveTiktokCatalogConfig(shopId);
       const inventoryItem = {
-        warehouse_id: this.warehouseId, // sempre o warehouse da TikTok, vindo do .env
+        warehouse_id: catalogConfig.warehouseId, // sempre o warehouse da TikTok, vindo do .env/DB
         quantity: Math.max(0, Math.floor(availableQuantity)),
       };
 
@@ -251,6 +206,7 @@ export class TiktokProductClient {
       };
 
       const { url, headers, body: signedBody } = this.buildSignedOpenApiRequest(
+        catalogConfig,
         `/product/202309/products/${ttsProductId}/inventory/update`,
         accessToken,
         body,
@@ -275,6 +231,7 @@ export class TiktokProductClient {
    * seguindo o fluxo da doc de assinatura.
    */
   private buildSignedOpenApiRequest(
+    config: TiktokCatalogConfig,
     path: string,
     accessToken: string,
     body?: any,
@@ -296,33 +253,20 @@ export class TiktokProductClient {
     };
 
     // shop_cipher por padrão (requisitado em vários endpoints de produto)
-    if (options.includeShopCipher !== false && this.shopCipher) {
-      qs.shop_cipher = this.shopCipher;
+    if (options.includeShopCipher !== false && config.shopCipher) {
+      qs.shop_cipher = config.shopCipher;
     }
 
     // shop_id opcional, mas costuma ser útil
-    if (options.includeShopId !== false && this.shopId) {
-      qs.shop_id = this.shopId;
+    if (options.includeShopId !== false && config.shopId) {
+      qs.shop_id = config.shopId;
     }
 
-    return buildSignedRequest(this.openBase, path, this.appKey, this.appSecret, {
+    return buildSignedRequest(config.baseOpen, path, config.appKey, config.appSecret, {
       qs,
       headers,
       body,
     });
-  }
-
-  private buildAccessHeaders(accessToken: string) {
-    return {
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-      'x-tts-access-token': accessToken,
-      Authorization: `Bearer ${accessToken}`,
-    };
-  }
-
-  private normalizeBaseUrl(url: string) {
-    return url.endsWith('/') ? url.slice(0, -1) : url;
   }
 
   private parseProductResponse(data: any): TiktokProductResponse {
@@ -431,6 +375,7 @@ export class TiktokProductClient {
   }
 
   private async uploadImageWithToken(
+    config: TiktokCatalogConfig,
     normalizedUrl: string,
     accessToken: string,
   ): Promise<string | null> {
@@ -468,10 +413,10 @@ export class TiktokProductClient {
 
     // 4) Assinar a requisição (multipart => body não entra na assinatura)
     const { url, headers } = buildSignedRequest(
-      this.openBase,
+      config.baseOpen,
       '/product/202309/images/upload',
-      this.appKey,
-      this.appSecret,
+      config.appKey,
+      config.appSecret,
       {
         qs: {},
         headers: {
@@ -554,8 +499,8 @@ export class TiktokProductClient {
   }
 
   private async buildProductPayload(
+    config: TiktokCatalogConfig,
     shopId: string,
-    accessToken: string,
     input: TiktokProductInput,
     options: ProductPayloadOptions = {},
   ) {
@@ -565,15 +510,15 @@ export class TiktokProductClient {
 
     const primarySku = input.skus[0];
     const brandId =
-      this.brandId ?? (input.product.BrandId ? String(input.product.BrandId) : undefined);
+      config.brandId ?? (input.product.BrandId ? String(input.product.BrandId) : undefined);
     const brandName =
-      this.brandName ??
+      config.brandName ??
       input.product.BrandName ??
       primarySku.sku.BrandName ??
       'Generic';
     const categoryId =
       options.categoryId ??
-      this.categoryId ??
+      config.defaultCategoryId ??
       (input.product.CategoryId ? String(input.product.CategoryId) : undefined);
 
     if (!categoryId) {
@@ -596,12 +541,12 @@ export class TiktokProductClient {
       );
       const inventory = [
         {
-          warehouse_id: this.warehouseId,
+          warehouse_id: config.warehouseId,
           quantity: Math.floor(quantity),
         },
       ];
       const identifierCode = this.buildIdentifierCode(skuInput.sku);
-      const preparedImages = await this.prepareImages(shopId, skuInput.images);
+      const preparedImages = await this.prepareImages(config, shopId, skuInput.images);
 
       for (const image of preparedImages) {
         if (!mainImageUris.has(image.uri)) {
@@ -657,7 +602,7 @@ export class TiktokProductClient {
         seller_sku: sellerSku,
         price: {
           amount: priceAmount,
-          currency: this.currency,
+          currency: config.currency,
           sale_price: priceAmount,
         },
         inventory,
@@ -684,10 +629,14 @@ export class TiktokProductClient {
       skuPayloads.push(this.cleanPayload(skuPayload));
     }
 
-    const description = this.buildDescription(input.product, primarySku);
+    const description = this.buildDescription(
+      input.product,
+      primarySku,
+      config.descriptionFallback,
+    );
 
     const payload: Record<string, unknown> = {
-      save_mode: this.saveMode,
+      save_mode: config.saveMode,
       title: this.buildTitle(input.product, primarySku),
       description,
       category_id: categoryId,
@@ -696,8 +645,8 @@ export class TiktokProductClient {
       main_images: Array.from(mainImageUris.values()),
       skus: skuPayloads,
       product_attributes: this.buildProductAttributes(input),
-      package_dimensions: this.buildPackageDimensions(primarySku.sku),
-      package_weight: this.buildPackageWeight(primarySku.sku),
+      package_dimensions: this.buildPackageDimensions(primarySku.sku, config),
+      package_weight: this.buildPackageWeight(primarySku.sku, config),
       is_cod_allowed: false,
       is_pre_owned: false,
       idempotency_key: this.buildIdempotencyKey(
@@ -705,8 +654,8 @@ export class TiktokProductClient {
         input.product.Id,
         options.idempotencyKeySuffix,
       ),
-      minimum_order_quantity: this.minimumOrderQuantity,
-      listing_platforms: this.listingPlatforms,
+      minimum_order_quantity: config.minimumOrderQuantity,
+      listing_platforms: config.listingPlatforms,
     };
 
     if (!brandId) {
@@ -715,10 +664,10 @@ export class TiktokProductClient {
     if (!brandName) {
       delete payload.brand_name;
     }
-    if (!this.minimumOrderQuantity) {
+    if (!config.minimumOrderQuantity) {
       delete payload.minimum_order_quantity;
     }
-    if (!this.listingPlatforms || this.listingPlatforms.length === 0) {
+    if (!config.listingPlatforms || config.listingPlatforms.length === 0) {
       delete payload.listing_platforms;
     }
     if (options.productId) {
@@ -729,6 +678,7 @@ export class TiktokProductClient {
   }
 
   private async prepareImages(
+    config: TiktokCatalogConfig,
     shopId: string,
     images: VtexSkuImage[],
   ): Promise<Array<{ uri: string }>> {
@@ -740,7 +690,7 @@ export class TiktokProductClient {
       const downloadUrls = [image.url, image.url.split('?')[0]];
       let uploadedUri: string | null = null;
       for (const url of downloadUrls) {
-        uploadedUri = await this.ensureImageUri(shopId, url);
+        uploadedUri = await this.ensureImageUri(config, shopId, url);
         if (uploadedUri) break;
       }
       if (uploadedUri) uris.push(uploadedUri);
@@ -755,6 +705,7 @@ export class TiktokProductClient {
 
 
   private async ensureImageUri(
+    config: TiktokCatalogConfig,
     shopId: string,
     imageUrl: string,
   ): Promise<string | null> {
@@ -769,7 +720,7 @@ export class TiktokProductClient {
 
     try {
       const uri = await this.withTokenRetry(shopId, (token) =>
-        this.uploadImageWithToken(normalized, token),
+        this.uploadImageWithToken(config, normalized, token),
       );
       return uri;
     } catch (error) {
@@ -793,13 +744,14 @@ export class TiktokProductClient {
   private buildDescription(
     product: VtexProduct,
     primarySku: TiktokProductSkuInput,
+    fallbackDescription: string,
   ): string {
     const description =
       product.Description ??
       product.MetaTagDescription ??
       (primarySku.sku as any)?.Description ??
-      this.fallbackDescription;
-    return description.toString().trim() || this.fallbackDescription;
+      fallbackDescription;
+    return description.toString().trim() || fallbackDescription;
   }
 
   private buildTitle(
@@ -890,10 +842,10 @@ export class TiktokProductClient {
     return [];
   }
 
-  private buildPackageDimensions(sku: VtexSkuSummary) {
-    const fallbackLength = this.packageLength ?? 10;
-    const fallbackWidth = this.packageWidth ?? 10;
-    const fallbackHeight = this.packageHeight ?? 10;
+  private buildPackageDimensions(sku: VtexSkuSummary, config: TiktokCatalogConfig) {
+    const fallbackLength = config.packageLength ?? 10;
+    const fallbackWidth = config.packageWidth ?? 10;
+    const fallbackHeight = config.packageHeight ?? 10;
 
     const length =
       this.extractDimension(sku.PackedLength ?? sku.Length) ?? fallbackLength;
@@ -906,21 +858,21 @@ export class TiktokProductClient {
       length: this.formatNumber(length),
       width: this.formatNumber(width),
       height: this.formatNumber(height),
-      unit: this.packageDimensionUnit,
+      unit: config.packageDimensionUnit,
     });
   }
 
-  private buildPackageWeight(sku: VtexSkuSummary) {
+  private buildPackageWeight(sku: VtexSkuSummary, config: TiktokCatalogConfig) {
     const weight =
       this.extractWeight(
         sku.PackedWeightKg ?? sku.WeightKg ?? sku.RealWeightKg,
       ) ??
-      this.packageWeight ??
+      config.packageWeight ??
       1;
 
     return this.cleanPayload({
       value: this.formatNumber(weight),
-      unit: this.packageWeightUnit,
+      unit: config.packageWeightUnit,
     });
   }
 

@@ -48,7 +48,7 @@ TIKTOK_LISTING_PLATFORMS=TIKTOK_SHOP
 
 VTEX_ACCOUNT=seuaccount
 VTEX_ENVIRONMENT=vtexcommercestable
-# opcional: informe o domínio completo da VTEX se precisar (ex.: leblog2.vtexcommercestable.com.br)
+# opcional: informe o domínio completo da VTEX se precisar (ex.: minha-loja.vtexcommercestable.com.br)
 VTEX_DOMAIN=
 # opcional: controle de paginação na listagem de SKUs (padrão pageSize=50, até 20 páginas)
 VTEX_PAGE_SIZE=50
@@ -94,6 +94,19 @@ npm run prisma:generate
 ```bash
 npx prisma migrate deploy
 ```
+
+#### Cadastro de lojas (multi-tenant)
+O middleware agora suporta múltiplas lojas. Cada loja precisa de um registro em `Shop`
+com os dados de VTEX e TikTok Shop.
+
+Para manter a loja atual funcionando, você pode importar os valores do `.env`:
+
+```bash
+npm run shop:seed -- --shop=SEU_SHOP_ID --name="Nome da Loja"
+```
+
+Para adicionar novos sellers, rode o mesmo comando após preencher as variáveis específicas
+da loja no `.env` (ou adapte o script para ler de outro arquivo/variáveis).
 
 ### Execução
 - Dev: `npm run start:dev`

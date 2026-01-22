@@ -4,6 +4,7 @@ import { createHash } from 'crypto';
 import { PinoLogger } from 'nestjs-pino';
 
 import { AppConfig } from '../common/config';
+import { ShopConfigService } from '../common/shop-config.service';
 import { OrderWebhookDto } from '../common/dto';
 import { IdempotencyService } from '../common/idempotency.service';
 import { PrismaService } from '../prisma/prisma.service';
@@ -19,6 +20,7 @@ export class OrdersService {
     private readonly idempotency: IdempotencyService,
     private readonly prisma: PrismaService,
     private readonly configService: ConfigService<AppConfig>,
+    private readonly shopConfig: ShopConfigService,
     private readonly logisticsService: LogisticsService,
     private readonly logger: PinoLogger,
   ) {
@@ -82,7 +84,7 @@ export class OrdersService {
 
         let vtexResponse;
         try {
-          vtexResponse = await this.vtexClient.createOrder(vtexPayload);
+          vtexResponse = await this.vtexClient.createOrder(shopId, vtexPayload);
           const responseData = vtexResponse.data;
           // Fulfillment API returns an array of orders
           const firstOrder = Array.isArray(responseData) ? responseData[0] : responseData;
@@ -90,7 +92,12 @@ export class OrdersService {
           this.logger.info({ orderId, vtexOrderId }, 'Created VTEX order successfully');
 
           await this.prisma.orderMap.upsert({
-            where: { ttsOrderId: orderId },
+            where: {
+              shopId_ttsOrderId: {
+                shopId,
+                ttsOrderId: orderId,
+              },
+            },
             update: {
               vtexOrderId,
               status: 'imported',
@@ -126,7 +133,7 @@ export class OrdersService {
             vtexPayload = await this.buildVtexOrderPayload(orderDetails, shopId, {
               priceMode: 'price',
             });
-            vtexResponse = await this.vtexClient.createOrder(vtexPayload);
+            vtexResponse = await this.vtexClient.createOrder(shopId, vtexPayload);
             const responseData = vtexResponse.data;
             const firstOrder = Array.isArray(responseData) ? responseData[0] : responseData;
             const vtexOrderId = firstOrder?.orderId ?? firstOrder?.id ?? null;
@@ -136,7 +143,12 @@ export class OrdersService {
             );
 
             await this.prisma.orderMap.upsert({
-              where: { ttsOrderId: orderId },
+              where: {
+                shopId_ttsOrderId: {
+                  shopId,
+                  ttsOrderId: orderId,
+                },
+              },
               update: {
                 vtexOrderId,
                 status: 'imported',
@@ -181,7 +193,12 @@ export class OrdersService {
           );
 
           await this.prisma.orderMap.upsert({
-            where: { ttsOrderId: orderId },
+            where: {
+              shopId_ttsOrderId: {
+                shopId,
+                ttsOrderId: orderId,
+              },
+            },
             update: {
               status: 'error',
               lastError: `VTEX API Error: ${vtexError?.message || 'Unknown error'}`,
@@ -213,8 +230,8 @@ export class OrdersService {
     });
   }
 
-  async getLabel(orderId: string) {
-    return this.logisticsService.getLabel(orderId);
+  async getLabel(shopId: string, orderId: string) {
+    return this.logisticsService.getLabel(shopId, orderId);
   }
 
   private async buildVtexOrderPayload(
@@ -222,6 +239,8 @@ export class OrdersService {
     shopId: string,
     options?: { priceMode?: 'selling' | 'price' },
   ) {
+    const vtexConfig = await this.shopConfig.resolveVtexConfig(shopId);
+
     // TikTok API v202309 uses line_items
     const items = Array.isArray(order?.line_items)
       ? order.line_items
@@ -275,7 +294,12 @@ export class OrdersService {
 
           try {
             await this.prisma.productMap.upsert({
-              where: { vtexSkuId: item.seller_sku },
+              where: {
+                shopId_vtexSkuId: {
+                  shopId,
+                  vtexSkuId: item.seller_sku,
+                },
+              },
               update: {
                 ttsSkuId: item.sku_id,
                 ttsProductId: item.product_id,
@@ -416,6 +440,7 @@ export class OrdersService {
       }, 'Simulating order with VTEX');
 
       simulation = await this.vtexClient.simulateOrder(
+        shopId,
         mappedItems,
         address.postalCode,
         address.country
@@ -553,18 +578,17 @@ export class OrdersService {
           }));
 
     const marketplaceServicesEndpoint =
-      this.configService.get<string>('VTEX_MARKETPLACE_SERVICES_ENDPOINT', { infer: true }) ??
-      this.configService.get<string>('PUBLIC_BASE_URL', { infer: true }) ??
-      'TikTokShop';
-    const paymentSystemId =
-      this.configService.get<string>('VTEX_PAYMENT_SYSTEM_ID', { infer: true }) ?? '201';
-    const paymentSystemName = this.configService.get<string>('VTEX_PAYMENT_SYSTEM_NAME', {
-      infer: true,
-    });
-    const paymentGroup = this.configService.get<string>('VTEX_PAYMENT_GROUP', { infer: true });
-    const paymentMerchant = this.configService.get<string>('VTEX_PAYMENT_MERCHANT', {
-      infer: true,
-    });
+      vtexConfig.marketplaceServicesEndpoint ??
+      this.configService.get<string>('PUBLIC_BASE_URL', { infer: true });
+    if (!marketplaceServicesEndpoint) {
+      throw new Error(
+        'Missing VTEX marketplace services endpoint. Configure VTEX_MARKETPLACE_SERVICES_ENDPOINT or PUBLIC_BASE_URL.',
+      );
+    }
+    const paymentSystemId = vtexConfig.paymentSystemId ?? '201';
+    const paymentSystemName = vtexConfig.paymentSystemName;
+    const paymentGroup = vtexConfig.paymentGroup;
+    const paymentMerchant = vtexConfig.paymentMerchant;
     const payment: Record<string, unknown> = {
       paymentSystem: paymentSystemId,
       installments: 1,

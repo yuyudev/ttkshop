@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Get,
+  Headers,
   HttpCode,
   Param,
   Post,
@@ -48,7 +49,13 @@ export class OrdersController {
 
   @UseGuards(ApiKeyAuthGuard)
   @Get('orders/:ttsOrderId/label')
-  async getLabel(@Param('ttsOrderId') orderId: string) {
-    return this.ordersService.getLabel(orderId);
+  async getLabel(
+    @Headers('x-tts-shopid') shopId: string,
+    @Param('ttsOrderId') orderId: string,
+  ) {
+    if (!shopId) {
+      throw new BadRequestException('Missing x-tts-shopid header');
+    }
+    return this.ordersService.getLabel(shopId, orderId);
   }
 }

@@ -13,6 +13,49 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+model Shop {
+  id                          String   @id @default(uuid())
+  shopId                      String   @unique
+  name                        String?
+  status                      String   @default("active")
+  tiktokShopCipher            String?
+  tiktokWarehouseId           String?
+  tiktokDefaultCategoryId     String?
+  tiktokBrandId               String?
+  tiktokBrandName             String?
+  tiktokCurrency              String?
+  tiktokSaveMode              String?
+  tiktokPackageWeight         Float?
+  tiktokPackageWeightUnit     String?
+  tiktokPackageLength         Float?
+  tiktokPackageWidth          Float?
+  tiktokPackageHeight         Float?
+  tiktokPackageDimensionUnit  String?
+  tiktokMinimumOrderQuantity  Int?
+  tiktokListingPlatforms      Json?
+  vtexAccount                 String?
+  vtexEnvironment             String?
+  vtexDomain                  String?
+  vtexAppKey                  String?
+  vtexAppToken                String?
+  vtexAffiliateId             String?
+  vtexSalesChannel            String?
+  vtexWarehouseId             String?
+  vtexWebhookToken            String?
+  vtexMarketplaceServicesEndpoint String?
+  vtexPaymentSystemId         String?
+  vtexPaymentSystemName       String?
+  vtexPaymentGroup            String?
+  vtexPaymentMerchant         String?
+  vtexPricingDomain           String?
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  @@index([vtexAccount])
+  @@index([vtexAffiliateId])
+  @@index([vtexWebhookToken])
+}
+
 model TiktokAuth {
   id              String   @id @default(uuid())
   shopId          String   @unique
@@ -26,7 +69,7 @@ model TiktokAuth {
 
 model ProductMap {
   id           String   @id @default(uuid())
-  vtexSkuId    String   @unique
+  vtexSkuId    String
   shopId       String
   ttsProductId String?
   ttsSkuId     String?
@@ -35,18 +78,24 @@ model ProductMap {
   lastError    String?
   updatedAt    DateTime @updatedAt
   createdAt    DateTime @default(now())
+
+  @@unique([shopId, vtexSkuId])
+  @@index([shopId])
 }
 
 model OrderMap {
   id          String   @id @default(uuid())
   shopId      String
-  ttsOrderId  String   @unique
+  ttsOrderId  String
   vtexOrderId String?
   status      String
   lastError   String?
   labelUrl    String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  @@unique([shopId, ttsOrderId])
+  @@index([shopId])
 }
 
 model Idempotency {
@@ -77,12 +126,14 @@ model TiktokCategory {
 model VtexCategoryMap {
   id               String   @id @default(uuid())
   vtexCategoryId   String
+  shopId           String?
   tiktokCategoryId String
   confidence       Float?
   notes            String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
 
-  @@unique([vtexCategoryId])
+  @@unique([shopId, vtexCategoryId])
+  @@index([shopId])
   @@index([tiktokCategoryId])
 }

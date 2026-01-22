@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
-import { ConfigService } from '@nestjs/config';
 import { PinoLogger } from 'nestjs-pino';
 
 import { InventorySyncDto } from '../common/dto';
@@ -8,7 +7,7 @@ import { PrismaService } from '../prisma/prisma.service';
 import { VtexCatalogClient } from '../catalog/vtex-catalog.client';
 import { TiktokProductClient } from '../catalog/tiktok-product.client';
 import { CatalogService } from '../catalog/catalog.service';
-import { AppConfig } from '../common/config';
+import { ShopConfigService } from '../common/shop-config.service';
 
 type ProductMapRecord = {
   vtexSkuId: string;
@@ -24,7 +23,7 @@ export class InventoryService {
     private readonly vtexClient: VtexCatalogClient,
     private readonly tiktokClient: TiktokProductClient,
     private readonly catalogService: CatalogService,
-    private readonly configService: ConfigService<AppConfig>,
+    private readonly shopConfig: ShopConfigService,
     private readonly logger: PinoLogger,
   ) {
     this.logger.setContext(InventoryService.name);
@@ -44,16 +43,14 @@ export class InventoryService {
     const skuIds = payload.skuIds?.length
       ? payload.skuIds
       : mappings.map((item: ProductMapRecord) => item.vtexSkuId);
-    const warehouseId =
-      payload.warehouseId ??
-      this.configService.get<string>('VTEX_WAREHOUSE_ID', { infer: true }) ??
-      '1_1';
+    const vtexConfig = await this.shopConfig.resolveVtexConfig(shopId);
+    const warehouseId = payload.warehouseId ?? vtexConfig.warehouseId ?? '1_1';
 
     const results = [];
     for (const skuId of skuIds) {
       try {
         // Use Logistics API to get real-time inventory
-        const inventory = await this.vtexClient.getSkuInventory(skuId, warehouseId);
+        const inventory = await this.vtexClient.getSkuInventory(shopId, skuId, warehouseId);
 
         const mapping = mappings.find((item: ProductMapRecord) => item.vtexSkuId === skuId);
         if (!mapping?.ttsSkuId || !mapping.ttsProductId) {
@@ -268,9 +265,6 @@ export class InventoryService {
       'Resolved shops for VTEX notification',
     );
     const results: Array<Record<string, unknown>> = [];
-    const warehouseId =
-      this.configService.get<string>('VTEX_WAREHOUSE_ID', { infer: true }) ??
-      '1_1';
 
     for (const shopId of shopIds) {
       const shopMappings = mappings.filter((mapping) => mapping.shopId === shopId);
@@ -281,6 +275,9 @@ export class InventoryService {
       const shopStockSkuIds = Array.from(stockSkuIds).filter(
         (skuId) => shopSkuIds.has(skuId) && !updateSkuIds.has(skuId),
       );
+
+      const vtexConfig = await this.shopConfig.resolveVtexConfig(shopId);
+      const warehouseId = vtexConfig.warehouseId ?? '1_1';
 
       this.logger.info(
         {

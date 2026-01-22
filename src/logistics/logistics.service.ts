@@ -20,7 +20,12 @@ export class LogisticsService {
     this.logger.info({ shopId, orderId, orderValue }, 'Generating shipping label');
 
     const mapping = await this.prisma.orderMap.findUnique({
-      where: { ttsOrderId: orderId },
+      where: {
+        shopId_ttsOrderId: {
+          shopId,
+          ttsOrderId: orderId,
+        },
+      },
     });
 
     if (!mapping) {
@@ -38,7 +43,12 @@ export class LogisticsService {
     this.logger.info({ orderId, labelUrl }, 'Shipping label generated');
 
     await this.prisma.orderMap.update({
-      where: { ttsOrderId: orderId },
+      where: {
+        shopId_ttsOrderId: {
+          shopId,
+          ttsOrderId: orderId,
+        },
+      },
       data: {
         labelUrl,
         lastError: null,
@@ -59,6 +69,7 @@ export class LogisticsService {
         if (trackingNumber) {
           this.logger.info({ orderId, vtexOrderId: mapping.vtexOrderId, trackingNumber, provider }, 'Updating VTEX with tracking info');
           await this.updateVtexTracking(
+            shopId,
             mapping.vtexOrderId,
             trackingNumber,
             provider,
@@ -81,6 +92,7 @@ export class LogisticsService {
   }
 
   private async updateVtexTracking(
+    shopId: string,
     vtexOrderId: string,
     trackingNumber: string,
     courier: string,
@@ -95,12 +107,17 @@ export class LogisticsService {
       courier,
       items: [], // VTEX allows empty items for simple invoice
     };
-    return this.vtexOrdersClient.updateTracking(vtexOrderId, invoiceData);
+    return this.vtexOrdersClient.updateTracking(shopId, vtexOrderId, invoiceData);
   }
 
-  async getLabel(orderId: string) {
+  async getLabel(shopId: string, orderId: string) {
     const mapping = await this.prisma.orderMap.findUnique({
-      where: { ttsOrderId: orderId },
+      where: {
+        shopId_ttsOrderId: {
+          shopId,
+          ttsOrderId: orderId,
+        },
+      },
     });
 
     if (!mapping) {
