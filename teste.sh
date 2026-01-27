@@ -4,46 +4,65 @@ cat > /tmp/vtex-payload.json <<'JSON'
 
 [
   {
-    "marketplaceOrderId": "582230062321862191",
-    "marketplaceServicesEndpoint": "https://tts.scoremedia.com.br/webhooks/vtex/notify/af388ccf040f09b4eb4e6a1c0bfbf17e64205bb53261d87046fb153d5018399c",
-    "marketplacePaymentValue": 12772,
+    "marketplaceOrderId": "582307593983067721",
+    "marketplaceServicesEndpoint": "https://tts.scoremedia.com.br/webhooks/vtex/notify/9226553e1728a95d4d47908ad97f1d002cac7b306f5de434acc1f1946c11086b",
+    "marketplacePaymentValue": 2950,
     "items": [
       {
-        "id": "7904",
+        "id": "25527",
         "quantity": 1,
         "seller": "1",
-        "price": 11920
+        "price": 2490,
+        "priceTags": [
+          {
+            "name": "discount@shipping-0203129c-5fb4-43a0-b06e-70fb237b49f4#0966f070-02dd-4411-9b84-8ac1e5e2b00b",
+            "value": -1,
+            "isPercentual": false,
+            "rawValue": -0.01
+          }
+        ]
       }
     ],
     "clientProfileData": {
-      "firstName": "LENICE",
-      "lastName": "FLORENTINO DE SOUZA",
-      "email": "v4bEFUSBUB5RZO52NPPFI6KKBKX2A@scs2.tiktok.com",
+      "firstName": "SAMARA",
+      "lastName": "SILVA DE AMORIM",
+      "email": "v4bGEUSBLA2SNO52NVPESWFUWKA2A@scs2.tiktok.com",
       "phone": "11999999999",
       "documentType": "cpf",
-      "document": "90598164200"
+      "document": "04028298164"
     },
     "shippingData": {
       "address": {
         "addressType": "residential",
-        "receiverName": "Lenice Florentino",
-        "postalCode": "04754010",
-        "city": "São Paulo",
+        "receiverName": "amorim.sami",
+        "postalCode": "05520200",
+        "city": "Sao Paulo",
         "state": "SP",
         "country": "BRA",
-        "street": "Avenida Mário Lopes Leão",
-        "number": "952",
-        "neighborhood": "Santo Amaro",
-        "complement": "Apto 1415 torre 2"
+        "street": "Avenida Professor Francisco Morato",
+        "number": "4886",
+        "neighborhood": "Vila Sônia",
+        "complement": "Apt 163"
       },
-      "selectedSla": "SEDEX",
+      "selectedSla": "Normal",
       "logisticsInfo": [
         {
           "itemIndex": 0,
-          "selectedSla": "SEDEX",
-          "price": 852,
-          "shippingEstimate": "6bd",
-          "lockTTL": "1bd"
+          "selectedSla": "Normal",
+          "price": 461,
+          "shippingEstimate": "4bd",
+          "lockTTL": "1bd",
+          "deliveryChannel": "delivery",
+          "selectedDeliveryChannel": "delivery",
+          "deliveryIds": [
+            {
+              "courierId": "loggi",
+              "warehouseId": "1a9a406",
+              "dockId": "171d460",
+              "quantity": 1,
+              "kitItemDetails": []
+            }
+          ]
         }
       ]
     },
@@ -54,7 +73,8 @@ cat > /tmp/vtex-payload.json <<'JSON'
           "paymentSystemName": "TikTok Shop",
           "group": "custom201PaymentGroupPaymentGroup",
           "installments": 1,
-          "value": 12772
+          "value": 2950,
+          "referenceValue": 2950
         }
       ]
     }
@@ -64,9 +84,9 @@ cat > /tmp/vtex-payload.json <<'JSON'
 JSON
 
 curl -sS -D /tmp/vtex-headers.txt -o /tmp/vtex-body.json \
-  -X POST "https://leblog2.vtexcommercestable.com.br/api/fulfillment/pvt/orders?sc=1&affiliateId=a13eac82-def4-49c6-a6ca-3a9b86e87915" \
-  -H "X-VTEX-API-AppKey: vtexappkey-leblog2-IVRVOO" \
-  -H "X-VTEX-API-AppToken: ESMSQCKLFZDDNVCXPAXYILLYHFKRFSJYCRWFYICRXRJEEFTXDGRUQBYLTUFNUIXLNNSTCHJXUKXNJNBEIPIMIMNTMQWMRVPDMHOUJDEFTMMCXRNFFYURHVNJSCTXPNRN" \
+  -X POST "https://hopelingerie.vtexcommercestable.com.br/api/fulfillment/pvt/orders?sc=1&affiliateId=0218d152-a253-4ccf-b991-116f05512491" \
+  -H "X-VTEX-API-AppKey: vtexappkey-hopelingerie-JGMZVH" \
+  -H "X-VTEX-API-AppToken: TJQGGWYHHTBWCYOHVDSNRQYAWBTVLKUZGYHFHJTBUAHFQKQRPFDLCFPQPBNOQZEONFUDCQKPIBSAZHVVMKJVXDXTISRGAWISWVHESXVQSAPQCCUMVVFVRPGGTFJOWFXY" \
   -H "Content-Type: application/json" \
   --data-binary @/tmp/vtex-payload.json
 
@@ -77,17 +97,16 @@ cat /tmp/vtex-body.json
 # cat > /tmp/vtex-sim.json <<'JSON'
 # {
 #   "items": [
-#     { "id": "7904", "quantity": 1, "seller": "1" }
+#     { "id": "25527", "quantity": 1, "seller": "1" }
 #   ],
-#   "postalCode": "04754010",
+#   "postalCode": "05520200",
 #   "country": "BRA"
 # }
 # JSON
 
 # curl -sS -D /tmp/vtex-sim-headers.txt -o /tmp/vtex-sim-body.json \
-#   -X POST "https://leblog2.vtexcommercestable.com.br/api/checkout/pub/orderForms/simulation?sc=1" \
+#   -X POST "https://hopelingerie.vtexcommercestable.com.br/api/checkout/pub/orderForms/simulation?sc=1&affiliateId=0218d152-a253-4ccf-b991-116f05512491" \
 #   -H "Content-Type: application/json" \
 #   --data-binary @/tmp/vtex-sim.json
 
 # cat /tmp/vtex-sim-body.json
-

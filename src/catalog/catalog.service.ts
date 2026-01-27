@@ -250,7 +250,7 @@ export class CatalogService {
         });
       }
 
-      // Normalizar e deduplicar labels de tamanho por produto
+      // Normalizar labels de tamanho por produto
       const seenSizes = new Set<string>();
 
       for (const skuInput of skuInputs) {
@@ -264,22 +264,18 @@ export class CatalogService {
           continue;
         }
 
+        skuInput.sizeLabel = normalized;
+
         if (seenSizes.has(normalized)) {
-          // Já temos um SKU com esse tamanho para este produto.
-          // Para evitar o erro 12052251, removemos o atributo de venda desta duplicata.
           this.logger.warn(
             {
               productId,
               vtexSkuId: skuInput.vtexSkuId,
-              sizeLabelOriginal: skuInput.sizeLabel,
               sizeLabelNormalized: normalized,
             },
-            'Duplicate size label for product; clearing sales attribute to avoid TikTok error 12052251',
+            'Duplicate size label for product; TikTok payload will normalize values per SKU',
           );
-
-          skuInput.sizeLabel = undefined;
         } else {
-          skuInput.sizeLabel = normalized;
           seenSizes.add(normalized);
         }
       }
@@ -717,32 +713,56 @@ export class CatalogService {
     const rawSkuName = (sku.Name ?? sku.name ?? (sku as any).NameComplete ?? '')
       .toString().trim();
 
-    let suffix = '';
+    let candidate = rawSkuName;
     // remover o nome do produto do início, se existir
     if (productName && rawSkuName.toLowerCase().startsWith(productName)) {
-      suffix = rawSkuName.slice(productName.length).trim();
-    } else {
-      // caso contrário, usar a última palavra
-      const parts = rawSkuName.split(/\s+/);
-      suffix = parts[parts.length - 1] ?? '';
+      candidate = rawSkuName.slice(productName.length).trim();
     }
 
-    // aceitar apenas números (1 a 3 dígitos) ou siglas PP/P/M/G/GG
-    const match = suffix.match(/^(pp|p|m|g|gg|\d{1,3})$/i);
-    if (match) {
-      return match[1].toUpperCase();
+    const fromCandidate =
+      this.extractSizeToken(candidate) ?? this.extractSizeToken(rawSkuName);
+    if (fromCandidate) {
+      return fromCandidate;
     }
 
-    // fallback: último segmento numérico do refId
+    // fallback: procurar no refId
     const refId = (sku as any).RefId ?? (sku as any).refId;
     if (typeof refId === 'string') {
-      const refParts = refId.split(/[_-]/).map((p) => p.trim()).filter(Boolean);
-      const last = refParts[refParts.length - 1];
-      if (last && /^[0-9]{1,3}$/i.test(last)) {
-        return last;
+      const fromRef = this.extractSizeToken(refId);
+      if (fromRef) {
+        return fromRef;
       }
     }
     return undefined;
+  }
+
+  private extractSizeToken(value: string): string | undefined {
+    const normalized = value.toString().trim().toUpperCase();
+    if (!normalized) {
+      return undefined;
+    }
+
+    const tokens = normalized.split(/[^A-Z0-9]+/).filter(Boolean);
+    for (let i = tokens.length - 1; i >= 0; i -= 1) {
+      const token = tokens[i];
+      if (this.isSizeToken(token)) {
+        return token;
+      }
+    }
+
+    const suffixMatch = normalized.match(/(PP|GG|EG|XG|XXG|XGG|P|M|G|\d{1,3})$/);
+    if (suffixMatch) {
+      return suffixMatch[1];
+    }
+
+    return undefined;
+  }
+
+  private isSizeToken(token: string): boolean {
+    if (/^\d{1,3}$/.test(token)) {
+      return true;
+    }
+    return ['PP', 'P', 'M', 'G', 'GG', 'EG', 'XG', 'XXG', 'XGG'].includes(token);
   }
 
   private async fetchImagesSafely(

@@ -46,16 +46,22 @@ let VtexOrdersClient = VtexOrdersClient_1 = class VtexOrdersClient {
         const url = `${this.buildBaseUrl(vtexConfig)}/checkout/pub/orderForms/simulation`;
         const sc = vtexConfig.salesChannel;
         const affiliateId = vtexConfig.affiliateId;
-        const payload = {
-            items: items.map((item) => ({
+        const payloadItems = items.map((item) => {
+            const entry = {
                 id: item.id,
                 quantity: item.quantity,
-                seller: item.seller,
-            })),
+            };
+            if (item.seller !== undefined && item.seller !== null && item.seller !== '') {
+                entry.seller = item.seller;
+            }
+            return entry;
+        });
+        const payload = {
+            items: payloadItems,
             postalCode,
             country,
         };
-        this.logger.info({ url, payload }, 'Calling VTEX simulation endpoint');
+        this.logger.info({ url, payload, params: { sc, affiliateId: affiliateId ?? null } }, 'Calling VTEX simulation endpoint');
         return (0, rxjs_1.firstValueFrom)(this.http.post(url, payload, {
             headers: this.buildHeaders(vtexConfig),
             params: {

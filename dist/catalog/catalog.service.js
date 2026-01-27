@@ -162,17 +162,15 @@ let CatalogService = CatalogService_1 = class CatalogService {
                     skuInput.sizeLabel = undefined;
                     continue;
                 }
+                skuInput.sizeLabel = normalized;
                 if (seenSizes.has(normalized)) {
                     this.logger.warn({
                         productId,
                         vtexSkuId: skuInput.vtexSkuId,
-                        sizeLabelOriginal: skuInput.sizeLabel,
                         sizeLabelNormalized: normalized,
-                    }, 'Duplicate size label for product; clearing sales attribute to avoid TikTok error 12052251');
-                    skuInput.sizeLabel = undefined;
+                    }, 'Duplicate size label for product; TikTok payload will normalize values per SKU');
                 }
                 else {
-                    skuInput.sizeLabel = normalized;
                     seenSizes.add(normalized);
                 }
             }
@@ -488,27 +486,46 @@ let CatalogService = CatalogService_1 = class CatalogService {
         const productName = (product.Name ?? '').toString().trim().toLowerCase();
         const rawSkuName = (sku.Name ?? sku.name ?? sku.NameComplete ?? '')
             .toString().trim();
-        let suffix = '';
+        let candidate = rawSkuName;
         if (productName && rawSkuName.toLowerCase().startsWith(productName)) {
-            suffix = rawSkuName.slice(productName.length).trim();
+            candidate = rawSkuName.slice(productName.length).trim();
         }
-        else {
-            const parts = rawSkuName.split(/\s+/);
-            suffix = parts[parts.length - 1] ?? '';
-        }
-        const match = suffix.match(/^(pp|p|m|g|gg|\d{1,3})$/i);
-        if (match) {
-            return match[1].toUpperCase();
+        const fromCandidate = this.extractSizeToken(candidate) ?? this.extractSizeToken(rawSkuName);
+        if (fromCandidate) {
+            return fromCandidate;
         }
         const refId = sku.RefId ?? sku.refId;
         if (typeof refId === 'string') {
-            const refParts = refId.split(/[_-]/).map((p) => p.trim()).filter(Boolean);
-            const last = refParts[refParts.length - 1];
-            if (last && /^[0-9]{1,3}$/i.test(last)) {
-                return last;
+            const fromRef = this.extractSizeToken(refId);
+            if (fromRef) {
+                return fromRef;
             }
         }
         return undefined;
+    }
+    extractSizeToken(value) {
+        const normalized = value.toString().trim().toUpperCase();
+        if (!normalized) {
+            return undefined;
+        }
+        const tokens = normalized.split(/[^A-Z0-9]+/).filter(Boolean);
+        for (let i = tokens.length - 1; i >= 0; i -= 1) {
+            const token = tokens[i];
+            if (this.isSizeToken(token)) {
+                return token;
+            }
+        }
+        const suffixMatch = normalized.match(/(PP|GG|EG|XG|XXG|XGG|P|M|G|\d{1,3})$/);
+        if (suffixMatch) {
+            return suffixMatch[1];
+        }
+        return undefined;
+    }
+    isSizeToken(token) {
+        if (/^\d{1,3}$/.test(token)) {
+            return true;
+        }
+        return ['PP', 'P', 'M', 'G', 'GG', 'EG', 'XG', 'XXG', 'XGG'].includes(token);
     }
     async fetchImagesSafely(shopId, skuId) {
         try {

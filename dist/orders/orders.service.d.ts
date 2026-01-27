@@ -35,6 +35,11 @@ export declare class OrdersService {
     private resolveSimulationPricing;
     private sanitizePriceTags;
     private isVtexPaymentMismatch;
+    private isVtexSlaUnavailable;
+    private parseShippingEstimateToDays;
+    private pickPreferredDeliverySla;
+    private buildDeliverySlaSummary;
+    private logDeliverySlasAfterSlaError;
     private logOrderSnapshot;
     private resolveRecipientAddress;
     private isAddressLike;

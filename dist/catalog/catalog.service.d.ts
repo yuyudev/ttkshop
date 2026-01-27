@@ -44,6 +44,8 @@ export declare class CatalogService {
     private normalizeProductSkuIds;
     private extractSkuIdsFromSearchPayload;
     private deriveSizeLabel;
+    private extractSizeToken;
+    private isSizeToken;
     private fetchImagesSafely;
     private syncInventoryForSku;
     private isNotFoundError;
