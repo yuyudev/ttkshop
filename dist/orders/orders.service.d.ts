@@ -54,5 +54,13 @@ export declare class OrdersService {
     private buildMarketplaceIdempotencyKey;
     private resolveOrderMapping;
     private extractInvoiceData;
+    private uploadInvoiceToTikTok;
+    private resolveInvoiceFileBase64;
+    private resolveInvoiceFileCandidate;
+    private normalizeInvoiceContentToBase64;
+    private isLikelyBase64;
+    private resolveTiktokPackageId;
+    private extractPackageIdFromOrder;
+    private findFirstKeyValue;
     private resolveOrderValue;
 }

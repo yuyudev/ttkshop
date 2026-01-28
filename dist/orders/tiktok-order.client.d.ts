@@ -15,6 +15,14 @@ export declare class TiktokOrderClient {
     listOrders(shopId: string, params?: Record<string, string>): Promise<import("axios").AxiosResponse<any, any, {}>>;
     getOrder(shopId: string, orderId: string): Promise<import("axios").AxiosResponse<any, any, {}>>;
     ackOrder(shopId: string, orderId: string): Promise<import("axios").AxiosResponse<any, any, {}>>;
+    uploadInvoice(shopId: string, payload: {
+        invoices: Array<{
+            package_id: string;
+            order_ids: string | string[];
+            file_type: string;
+            file: string;
+        }>;
+    }): Promise<import("axios").AxiosResponse<any, any, {}>>;
     private request;
     private isExpiredError;
     private withTokenRetry;

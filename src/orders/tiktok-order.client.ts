@@ -38,6 +38,40 @@ export class TiktokOrderClient {
     return this.request(shopId, 'post', '/order/202309/orders/ack', { order_ids: [orderId] });
   }
 
+  async uploadInvoice(shopId: string, payload: { invoices: Array<{ package_id: string; order_ids: string | string[]; file_type: string; file: string }> }) {
+    return this.withTokenRetry(shopId, async (token) => {
+      const baseUrl = this.openBase.replace(/\/$/, '');
+      const cleanPath = '/fulfillment/202502/invoice/upload';
+
+      const shopConfig = await this.shopConfigService.getTiktokOrderConfig(shopId);
+      const { url, headers, body } = buildSignedRequest(
+        baseUrl,
+        cleanPath,
+        this.appKey,
+        this.appSecret,
+        {
+          qs: {
+            shop_cipher: shopConfig.shopCipher,
+          },
+          headers: {
+            'content-type': 'application/json',
+            Accept: 'application/json',
+            'x-tts-access-token': token,
+          },
+          body: payload,
+        },
+      );
+
+      const response = await firstValueFrom(this.http.post(url, body, { headers }));
+      const code = response.data?.code;
+      if (code !== undefined && code !== 0) {
+        const message = response.data?.message ?? 'Unknown';
+        throw new Error(`TikTok invoice upload failed: code=${code} message=${message}`);
+      }
+      return response;
+    });
+  }
+
   private async request(
     shopId: string,
     method: 'get' | 'post',

@@ -18,6 +18,7 @@ export declare class VtexOrdersClient {
         country: string;
     }, {}>>;
     updateTracking(shopId: string, orderId: string, invoiceData: any): Promise<import("axios").AxiosResponse<any, any, {}>>;
+    fetchInvoiceFile(shopId: string, invoiceUrl: string): Promise<string | null>;
     authorizeDispatch(shopId: string, orderId: string): Promise<import("axios").AxiosResponse<any, null, {}>>;
     private buildBaseUrl;
     private buildHeaders;

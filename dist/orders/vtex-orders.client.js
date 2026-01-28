@@ -69,6 +69,26 @@ let VtexOrdersClient = VtexOrdersClient_1 = class VtexOrdersClient {
         const url = `${this.buildBaseUrl(vtexConfig)}/oms/pvt/orders/${orderId}/invoice`;
         return (0, rxjs_1.firstValueFrom)(this.http.post(url, invoiceData, { headers: this.buildHeaders(vtexConfig) }));
     }
+    async fetchInvoiceFile(shopId, invoiceUrl) {
+        if (!invoiceUrl) {
+            return null;
+        }
+        const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+        const headers = this.buildHeaders(vtexConfig);
+        const baseUrl = this.buildBaseUrl(vtexConfig).replace(/\/api$/, '');
+        const url = invoiceUrl.startsWith('http') ? invoiceUrl : `${baseUrl}${invoiceUrl}`;
+        const response = await (0, rxjs_1.firstValueFrom)(this.http.get(url, {
+            headers,
+            responseType: 'text',
+        }));
+        if (typeof response.data === 'string') {
+            return response.data;
+        }
+        if (response.data && Buffer.isBuffer(response.data)) {
+            return response.data.toString('utf8');
+        }
+        return null;
+    }
     async authorizeDispatch(shopId, orderId) {
         const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
         const url = `${this.buildBaseUrl(vtexConfig)}/fulfillment/pvt/orders/${orderId}/fulfill`;

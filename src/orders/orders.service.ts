@@ -344,6 +344,23 @@ export class OrdersService {
 
       const orderValue = this.resolveOrderValue(orderData);
 
+      const invoiceId = invoice?.key ?? invoice?.number ?? 'unknown';
+      const uploadKey = `tiktok-invoice-upload:${mapping.ttsOrderId}:${invoiceId}`;
+      const uploadResult = await this.idempotency.register(
+        uploadKey,
+        { ttsOrderId: mapping.ttsOrderId, invoiceId },
+        async () => {
+          await this.uploadInvoiceToTikTok(shopId, mapping.ttsOrderId, orderData, invoice);
+        },
+      );
+
+      if (uploadResult === 'skipped') {
+        this.logger.info(
+          { shopId, orderId: mapping.ttsOrderId, vtexOrderId, invoiceId },
+          'Invoice already uploaded to TikTok; proceeding with label generation',
+        );
+      }
+
       this.logger.info(
         {
           shopId,
@@ -1331,6 +1348,239 @@ export class OrdersService {
           value: Number.isFinite(Number(value)) ? Number(value) : undefined,
         };
       }
+    }
+
+    return null;
+  }
+
+  private async uploadInvoiceToTikTok(
+    shopId: string,
+    ttsOrderId: string,
+    orderData: any,
+    invoice: { number?: string; key?: string; issuanceDate?: string; value?: number },
+  ): Promise<void> {
+    const fileBase64 = await this.resolveInvoiceFileBase64(orderData, shopId);
+    if (!fileBase64) {
+      throw new Error('Invoice XML not found or not retrievable for TikTok upload');
+    }
+
+    const packageId = await this.resolveTiktokPackageId(shopId, ttsOrderId);
+    if (!packageId) {
+      throw new Error('TikTok package_id not found for invoice upload');
+    }
+
+    this.logger.info(
+      { shopId, orderId: ttsOrderId, packageId, invoiceNumber: invoice?.number },
+      'Uploading invoice to TikTok',
+    );
+
+    await this.tiktokClient.uploadInvoice(shopId, {
+      invoices: [
+        {
+          package_id: packageId,
+          order_ids: ttsOrderId,
+          file_type: 'XML',
+          file: fileBase64,
+        },
+      ],
+    });
+
+    this.logger.info(
+      { shopId, orderId: ttsOrderId, packageId },
+      'Invoice uploaded to TikTok successfully',
+    );
+  }
+
+  private async resolveInvoiceFileBase64(orderData: any, shopId: string): Promise<string | null> {
+    const candidate = this.resolveInvoiceFileCandidate(orderData);
+    if (!candidate) {
+      return null;
+    }
+
+    if (candidate.kind === 'url') {
+      const xmlContent = await this.vtexClient.fetchInvoiceFile(shopId, candidate.value);
+      if (!xmlContent) {
+        return null;
+      }
+      return this.normalizeInvoiceContentToBase64(xmlContent);
+    }
+
+    return this.normalizeInvoiceContentToBase64(candidate.value);
+  }
+
+  private resolveInvoiceFileCandidate(orderData: any): { kind: 'content' | 'url'; value: string } | null {
+    if (!orderData || typeof orderData !== 'object') {
+      return null;
+    }
+
+    const candidates: any[] = [];
+    if (Array.isArray(orderData?.invoiceData?.invoices)) {
+      candidates.push(...orderData.invoiceData.invoices);
+    }
+    if (orderData?.invoiceData && typeof orderData.invoiceData === 'object') {
+      candidates.push(orderData.invoiceData);
+    }
+    if (Array.isArray(orderData?.packageAttachment?.packages)) {
+      candidates.push(...orderData.packageAttachment.packages);
+    }
+    if (orderData?.packageAttachment && typeof orderData.packageAttachment === 'object') {
+      candidates.push(orderData.packageAttachment);
+    }
+    if (Array.isArray(orderData?.invoices)) {
+      candidates.push(...orderData.invoices);
+    }
+
+    const contentKeys = [
+      'invoiceXml',
+      'invoice_xml',
+      'nfeXml',
+      'nfe_xml',
+      'xml',
+      'nf_xml',
+      'embeddedInvoice',
+      'embedded_invoice',
+      'file',
+      'content',
+    ];
+    const urlKeys = [
+      'invoiceUrl',
+      'invoice_url',
+      'xmlUrl',
+      'xml_url',
+      'nfeUrl',
+      'nfe_url',
+      'embeddedInvoiceUrl',
+      'embedded_invoice_url',
+      'fileUrl',
+      'file_url',
+      'url',
+    ];
+
+    for (const candidate of candidates) {
+      if (!candidate || typeof candidate !== 'object') continue;
+
+      for (const key of contentKeys) {
+        const value = candidate[key];
+        if (typeof value === 'string' && value.trim()) {
+          return { kind: 'content', value: value.trim() };
+        }
+      }
+
+      for (const key of urlKeys) {
+        const value = candidate[key];
+        if (typeof value === 'string' && value.trim()) {
+          return { kind: 'url', value: value.trim() };
+        }
+      }
+    }
+
+    return null;
+  }
+
+  private normalizeInvoiceContentToBase64(content: string): string | null {
+    if (!content || typeof content !== 'string') {
+      return null;
+    }
+    const trimmed = content.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    if (trimmed.startsWith('<') || trimmed.startsWith('<?xml')) {
+      return Buffer.from(trimmed, 'utf8').toString('base64');
+    }
+
+    if (this.isLikelyBase64(trimmed)) {
+      return trimmed;
+    }
+
+    return null;
+  }
+
+  private isLikelyBase64(value: string): boolean {
+    if (!value || value.length % 4 !== 0) {
+      return false;
+    }
+    return /^[A-Za-z0-9+/=\r\n]+$/.test(value);
+  }
+
+  private async resolveTiktokPackageId(shopId: string, ttsOrderId: string): Promise<string | null> {
+    const response = await this.tiktokClient.getOrder(shopId, ttsOrderId);
+    const orderData =
+      response.data?.data?.orders?.[0] ??
+      response.data?.data ??
+      response.data;
+
+    return this.extractPackageIdFromOrder(orderData, ttsOrderId);
+  }
+
+  private extractPackageIdFromOrder(orderData: any, ttsOrderId: string): string | null {
+    if (!orderData || typeof orderData !== 'object') {
+      return null;
+    }
+
+    const packages =
+      orderData?.packages ??
+      orderData?.package_list ??
+      orderData?.packageList ??
+      orderData?.package ??
+      orderData?.package_info ??
+      orderData?.packageInfo ??
+      orderData?.packageAttachment?.packages ??
+      null;
+
+    if (Array.isArray(packages)) {
+      const match = packages.find((pkg: any) => {
+        const orderIds = pkg?.order_ids ?? pkg?.orderIds ?? pkg?.order_id ?? pkg?.orderId;
+        if (Array.isArray(orderIds)) {
+          return orderIds.includes(ttsOrderId);
+        }
+        return orderIds === ttsOrderId;
+      });
+      const candidate = match ?? packages[0];
+      const packageId =
+        candidate?.package_id ??
+        candidate?.packageId ??
+        candidate?.id ??
+        null;
+      if (packageId) {
+        return String(packageId);
+      }
+    }
+
+    const direct = orderData?.package_id ?? orderData?.packageId;
+    if (direct) {
+      return String(direct);
+    }
+
+    return this.findFirstKeyValue(orderData, ['package_id', 'packageId']);
+  }
+
+  private findFirstKeyValue(
+    input: any,
+    keys: string[],
+  ): string | null {
+    if (!input || typeof input !== 'object') {
+      return null;
+    }
+
+    if (Array.isArray(input)) {
+      for (const item of input) {
+        const found = this.findFirstKeyValue(item, keys);
+        if (found) return found;
+      }
+      return null;
+    }
+
+    for (const key of keys) {
+      if (input[key]) {
+        return String(input[key]);
+      }
+    }
+
+    for (const value of Object.values(input)) {
+      const found = this.findFirstKeyValue(value, keys);
+      if (found) return found;
     }
 
     return null;

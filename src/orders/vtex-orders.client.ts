@@ -85,6 +85,33 @@ export class VtexOrdersClient {
     );
   }
 
+  async fetchInvoiceFile(shopId: string, invoiceUrl: string): Promise<string | null> {
+    if (!invoiceUrl) {
+      return null;
+    }
+    const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+    const headers = this.buildHeaders(vtexConfig);
+    const baseUrl = this.buildBaseUrl(vtexConfig).replace(/\/api$/, '');
+    const url = invoiceUrl.startsWith('http') ? invoiceUrl : `${baseUrl}${invoiceUrl}`;
+
+    const response = await firstValueFrom(
+      this.http.get(url, {
+        headers,
+        responseType: 'text',
+      }),
+    );
+
+    if (typeof response.data === 'string') {
+      return response.data;
+    }
+
+    if (response.data && Buffer.isBuffer(response.data)) {
+      return response.data.toString('utf8');
+    }
+
+    return null;
+  }
+
   async authorizeDispatch(shopId: string, orderId: string) {
     const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
     const url = `${this.buildBaseUrl(vtexConfig)}/fulfillment/pvt/orders/${orderId}/fulfill`;
