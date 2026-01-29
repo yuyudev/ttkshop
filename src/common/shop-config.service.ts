@@ -25,6 +25,8 @@ export interface VtexShopConfig {
   paymentSystemName?: string;
   paymentGroup?: string;
   paymentMerchant?: string;
+  preferredSlaId?: string;
+  sellerId?: string;
 }
 
 export interface TiktokCatalogConfig {
@@ -81,6 +83,8 @@ export class ShopConfigService {
       paymentSystemName: this.normalizeOptional(record.vtexPaymentSystemName),
       paymentGroup: this.normalizeOptional(record.vtexPaymentGroup),
       paymentMerchant: this.normalizeOptional(record.vtexPaymentMerchant),
+      preferredSlaId: this.normalizeOptional(record.vtexPreferredSlaId),
+      sellerId: this.normalizeOptional(record.vtexSellerId),
     };
   }
 

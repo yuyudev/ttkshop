@@ -998,7 +998,8 @@ export class TiktokProductClient {
     skuInput: TiktokProductSkuInput,
   ): string | undefined {
     if (skuInput.sizeLabel) {
-      return skuInput.sizeLabel;
+      const normalized = skuInput.sizeLabel.toString().trim();
+      return normalized ? normalized.toUpperCase() : undefined;
     }
 
     const productName = product.Name?.toString().trim().toLowerCase() ?? '';
@@ -1009,29 +1010,54 @@ export class TiktokProductClient {
       '';
     const skuName = rawSkuName ? rawSkuName.toString().trim() : '';
 
+    let candidate = skuName;
     if (productName && skuName.toLowerCase().startsWith(productName)) {
-      const suffix = skuName.slice(productName.length).trim();
-      if (suffix) {
-        return suffix;
-      }
+      candidate = skuName.slice(productName.length).trim();
     }
 
-    if (skuName.includes(' ')) {
-      const candidate = skuName.split(/\s+/).pop();
-      if (candidate) {
-        return candidate.trim();
-      }
+    const fromCandidate =
+      this.extractSizeToken(candidate) ?? this.extractSizeToken(skuName);
+    if (fromCandidate) {
+      return fromCandidate;
     }
 
     const refId = (skuInput.sku as any)?.RefId ?? skuInput.sku.refId;
-    if (typeof refId === 'string' && refId.includes('_')) {
-      const parts = refId.split(/[_-]/).map((part) => part.trim()).filter(Boolean);
-      const candidate = parts[parts.length - 1];
-      if (candidate && candidate.length <= 6) {
-        return candidate;
+    if (typeof refId === 'string') {
+      const fromRef = this.extractSizeToken(refId);
+      if (fromRef) {
+        return fromRef;
       }
     }
 
     return undefined;
+  }
+
+  private extractSizeToken(value: string): string | undefined {
+    const normalized = value.toString().trim().toUpperCase();
+    if (!normalized) {
+      return undefined;
+    }
+
+    const tokens = normalized.split(/[^A-Z0-9]+/).filter(Boolean);
+    for (let i = tokens.length - 1; i >= 0; i -= 1) {
+      const token = tokens[i];
+      if (this.isSizeToken(token)) {
+        return token;
+      }
+    }
+
+    const suffixMatch = normalized.match(/(PP|GG|EG|XG|XXG|XGG|P|M|G|\d{1,3})$/);
+    if (suffixMatch) {
+      return suffixMatch[1];
+    }
+
+    return undefined;
+  }
+
+  private isSizeToken(token: string): boolean {
+    if (/^\d{1,3}$/.test(token)) {
+      return true;
+    }
+    return ['PP', 'P', 'M', 'G', 'GG', 'EG', 'XG', 'XXG', 'XGG'].includes(token);
   }
 }

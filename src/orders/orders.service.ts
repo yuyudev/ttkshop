@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { createHash } from 'crypto';
 import { setTimeout } from 'timers/promises';
@@ -223,6 +223,34 @@ export class OrdersService {
             );
             return;
           }
+          if (this.isVtexSlaUnavailable(vtexError)) {
+            const errorMessage =
+              'No delivery SLA available for chosen seller chain; check logistics coverage';
+            this.logger.warn(
+              {
+                orderId,
+                errorResponse: vtexError?.response?.data,
+                statusCode: vtexError?.response?.status,
+              },
+              'VTEX rejected selected SLA',
+            );
+            await this.logDeliverySlasAfterSlaError(shopId, vtexPayload, orderId);
+            await this.prisma.orderMap.upsert({
+              where: { ttsOrderId: orderId },
+              update: {
+                status: 'error',
+                lastError: errorMessage,
+                shopId,
+              },
+              create: {
+                ttsOrderId: orderId,
+                shopId,
+                status: 'error',
+                lastError: errorMessage,
+              },
+            });
+            throw new UnprocessableEntityException(errorMessage);
+          }
           this.logger.error(
             {
               err: vtexError,
@@ -386,6 +414,7 @@ export class OrdersService {
       price: number;
     }> = [];
     const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+    const configuredSellerId = vtexConfig.sellerId ?? '1';
 
     const toCents = (value: unknown): number => {
       if (value === null || value === undefined) {
@@ -491,7 +520,7 @@ export class OrdersService {
           mappedItems.push({
             id: sellerSku,
             quantity: normalizeQuantity(item.quantity),
-            seller: '1',
+            seller: configuredSellerId,
             price: toCents(item.sale_price ?? item.original_price ?? item.price ?? 0),
           });
           continue;
@@ -507,7 +536,7 @@ export class OrdersService {
       mappedItems.push({
         id: mapping.vtexSkuId,
         quantity: normalizeQuantity(item.quantity),
-        seller: '1',
+        seller: configuredSellerId,
         price: toCents(item.sale_price ?? item.original_price ?? item.price ?? 0),
       });
     }
@@ -599,16 +628,25 @@ export class OrdersService {
       price: number;
       shippingEstimate: string;
       lockTTL: string;
+      deliveryChannel?: string;
+      selectedDeliveryChannel?: string;
     }> = [];
     let simulation: any | null = null;
+    let simulationItems: any[] = [];
+    let simulationError: any | null = null;
 
     try {
-      this.logger.info({
+    this.logger.info(
+      {
         items: mappedItems.map(i => ({ id: i.id, quantity: i.quantity })),
         postalCode: address.postalCode,
         country: address.country,
         postalCodeRaw: rawPostalCode,
-      }, 'Simulating order with VTEX');
+        sc: vtexConfig.salesChannel,
+        affiliateId: vtexConfig.affiliateId ?? null,
+      },
+      'Simulating order with VTEX',
+    );
 
       simulation = await this.vtexClient.simulateOrder(
         shopId,
@@ -623,42 +661,151 @@ export class OrdersService {
         ? simulation.data.logisticsInfo
         : [];
 
-      const defaultSlaId =
-        logisticsEntries[0]?.slas?.[0]?.id ?? null;
+      simulationItems = Array.isArray(simulation.data?.items)
+        ? simulation.data.items
+        : [];
 
-      if (defaultSlaId) {
-        selectedSla = defaultSlaId;
-      }
+      const purchaseConditions = Array.isArray(
+        simulation.data?.purchaseConditions?.itemPurchaseConditions,
+      )
+        ? simulation.data.purchaseConditions.itemPurchaseConditions
+        : [];
+
+      const itemByIndex = new Map<number, any>();
+      simulationItems.forEach((item: any, index: number) => {
+        const itemIndex = Number(item?.requestIndex ?? item?.itemIndex ?? item?.index ?? index);
+        itemByIndex.set(itemIndex, item);
+      });
+
+      const deliverySlaSummary = this.buildDeliverySlaSummary(simulation.data);
+      this.logger.info(
+        {
+          orderId: order?.id ?? order?.order_id,
+          sc: vtexConfig.salesChannel,
+          affiliateId: vtexConfig.affiliateId ?? null,
+          postalCode: address.postalCode,
+          deliverySlas: deliverySlaSummary,
+        },
+        'Delivery SLAs available from simulation',
+      );
+
+      const findSellerChainForSla = (
+        itemId: string,
+        slaId: string,
+      ): string[] | null => {
+        if (!purchaseConditions.length) {
+          return null;
+        }
+        const conditions = purchaseConditions.filter(
+          (condition: any) => String(condition?.id ?? '') === itemId,
+        );
+        for (const condition of conditions) {
+          const slas = Array.isArray(condition?.slas) ? condition.slas : [];
+          const hasSla = slas.some(
+            (sla: any) =>
+              String(sla?.id ?? '') === slaId &&
+              (sla?.deliveryChannel ?? 'delivery') === 'delivery',
+          );
+          if (hasSla) {
+            return Array.isArray(condition?.sellerChain)
+              ? condition.sellerChain.map((value: any) => String(value))
+              : [];
+          }
+        }
+        return null;
+      };
 
       logisticsInfoPayload = [];
       shippingTotalCents = 0;
+      let missingDelivery = false;
+      const missingDetails: Array<Record<string, unknown>> = [];
+
+      const preferredSlaId = this.normalizeSlaId(vtexConfig.preferredSlaId);
 
       logisticsEntries.forEach((entry: any, index: number) => {
+        const itemIndex = Number(entry?.itemIndex ?? index);
+        const item = itemByIndex.get(itemIndex);
+        const itemId = String(item?.id ?? entry?.itemId ?? entry?.skuId ?? '');
         const slas = Array.isArray(entry?.slas) ? entry.slas : [];
-        if (!slas.length) {
+        const deliverySlas = slas.filter(
+          (sla: any) => (sla?.deliveryChannel ?? 'delivery') === 'delivery',
+        );
+
+        if (!deliverySlas.length) {
+          missingDelivery = true;
+          missingDetails.push({
+            itemIndex,
+            itemId,
+            reason: 'no_delivery_sla',
+          });
           return;
         }
-        let sla =
-          (selectedSla ? slas.find((s: any) => s?.id === selectedSla) : null) ??
-          slas[0];
+
+        let sla: any | null = null;
+        if (preferredSlaId) {
+          sla =
+            deliverySlas.find(
+              (candidate: any) =>
+                this.normalizeSlaId(candidate?.id) === preferredSlaId ||
+                this.normalizeSlaId(candidate?.name) === preferredSlaId,
+            ) ?? null;
+
+          if (!sla) {
+            this.logger.warn(
+              {
+                orderId: order?.id ?? order?.order_id,
+                preferredSlaId,
+                availableSlas: deliverySlas.map((candidate: any) => ({
+                  id: candidate?.id,
+                  name: candidate?.name,
+                  price: candidate?.price,
+                  shippingEstimate: candidate?.shippingEstimate,
+                })),
+              },
+              'Preferred SLA not available; falling back to default selection',
+            );
+          }
+        }
 
         if (!sla) {
+          sla = this.pickPreferredDeliverySla(deliverySlas);
+        }
+        if (!sla) {
+          missingDelivery = true;
+          missingDetails.push({
+            itemIndex,
+            itemId,
+            reason: 'no_delivery_sla',
+          });
+          return;
+        }
+
+        const sellerChain = findSellerChainForSla(itemId, String(sla?.id ?? ''));
+        if (purchaseConditions.length && !sellerChain) {
+          missingDelivery = true;
+          missingDetails.push({
+            itemIndex,
+            itemId,
+            reason: 'sla_not_in_purchase_conditions',
+            slaId: sla?.id,
+          });
           return;
         }
 
         if (!selectedSla) {
           selectedSla = sla.id;
-        }
-
-        if (sla.id !== selectedSla) {
+          if (sla.shippingEstimate) {
+            shippingEstimate = sla.shippingEstimate;
+          }
+        } else if (sla.id !== selectedSla) {
           this.logger.warn(
             {
               orderId: order?.id ?? order?.order_id,
-              itemIndex: index,
+              itemIndex,
               expectedSla: selectedSla,
               resolvedSla: sla.id,
             },
-            'Item did not include selected SLA; using fallback SLA',
+            'Item SLA differs from order-level SLA; keeping per-item SLA',
           );
         }
 
@@ -666,13 +813,23 @@ export class OrdersService {
         shippingTotalCents += slaPrice;
         shippingEstimate = sla.shippingEstimate ?? shippingEstimate;
         logisticsInfoPayload.push({
-          itemIndex: index,
+          itemIndex,
           selectedSla: sla.id,
           price: slaPrice,
           shippingEstimate: sla.shippingEstimate ?? shippingEstimate,
           lockTTL: sla.lockTTL ?? '1bd',
+          deliveryChannel: 'delivery',
+          selectedDeliveryChannel: 'delivery',
         });
       });
+
+      if (missingDelivery) {
+        this.logger.warn(
+          { orderId: order?.id ?? order?.order_id, missingDetails },
+          'No delivery SLA available for sellerChain',
+        );
+        selectedSla = null;
+      }
 
       if (selectedSla) {
         this.logger.info(
@@ -682,29 +839,43 @@ export class OrdersService {
             shippingEstimate,
             shippingTotalCents,
             logisticsCount: logisticsInfoPayload.length,
+            sc: vtexConfig.salesChannel,
+            affiliateId: vtexConfig.affiliateId ?? null,
+            selectedSlas: logisticsInfoPayload.map((info) => ({
+              itemIndex: info.itemIndex,
+              selectedSla: info.selectedSla,
+              price: info.price,
+              shippingEstimate: info.shippingEstimate,
+            })),
           },
           'Selected SLA from simulation',
         );
       } else {
         this.logger.warn(
-          { orderId: order?.id ?? order?.order_id, logisticsEntries },
-          'No SLA found in simulation',
+          {
+            orderId: order?.id ?? order?.order_id,
+            logisticsEntries,
+            sc: vtexConfig.salesChannel,
+            affiliateId: vtexConfig.affiliateId ?? null,
+          },
+          'No delivery SLA found in simulation',
         );
       }
     } catch (e) {
+      simulationError = e;
       this.logger.error({ err: e, orderId: order?.id ?? order?.order_id }, 'Failed to simulate order');
     }
 
     if (!selectedSla) {
-      const msg = `No valid SLA found for order. Check logistics configuration for SKU(s) ${mappedItems.map(i => i.id).join(',')} and Postal Code ${address.postalCode}`;
+      if (simulationError) {
+        throw simulationError;
+      }
+      const msg = `No delivery SLA found for order. Check delivery logistics configuration for SKU(s) ${mappedItems.map(i => i.id).join(',')} and Postal Code ${address.postalCode}`;
       this.logger.error(msg);
       // We throw here to stop the process and avoid FMT010
-      throw new Error(msg);
+      throw new UnprocessableEntityException(msg);
     }
 
-    const simulationItems = Array.isArray(simulation?.data?.items)
-      ? simulation.data.items
-      : [];
     const pricingBySkuId = this.resolveSimulationPricing(simulationItems, {
       priceMode: options?.priceMode ?? 'selling',
     });
@@ -746,6 +917,8 @@ export class OrdersService {
             price: index === 0 ? shippingTotalCents : 0,
             shippingEstimate,
             lockTTL: '1bd',
+            deliveryChannel: 'delivery',
+            selectedDeliveryChannel: 'delivery',
           }));
 
     const marketplaceServicesEndpoint =
@@ -862,6 +1035,156 @@ export class OrdersService {
   private isVtexPaymentMismatch(error: any): boolean {
     const code = error?.response?.data?.error?.code;
     return code === 'FMT007';
+  }
+
+  private isVtexSlaUnavailable(error: any): boolean {
+    const code = error?.response?.data?.error?.code;
+    return code === 'FMT010';
+  }
+
+  private parseShippingEstimateToDays(estimate?: string | null): number {
+    if (!estimate) {
+      return Number.POSITIVE_INFINITY;
+    }
+    const normalized = String(estimate).trim().toLowerCase();
+    const match = normalized.match(/(\d+)\s*(bd|d|h|m)/);
+    if (!match) {
+      return Number.POSITIVE_INFINITY;
+    }
+    const value = Number(match[1]);
+    if (!Number.isFinite(value)) {
+      return Number.POSITIVE_INFINITY;
+    }
+    const unit = match[2];
+    if (unit === 'h') {
+      return value / 24;
+    }
+    if (unit === 'm') {
+      return value / (24 * 60);
+    }
+    return value;
+  }
+
+  private normalizeSlaId(value: unknown): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+    const trimmed = value.trim().toLowerCase();
+    return trimmed ? trimmed : null;
+  }
+
+  private pickPreferredDeliverySla(deliverySlas: any[]): any | null {
+    if (!Array.isArray(deliverySlas) || !deliverySlas.length) {
+      return null;
+    }
+    const normalize = (value: unknown) => String(value ?? '').trim().toLowerCase();
+    const isNormal = (sla: any) =>
+      normalize(sla?.id) === 'normal' || normalize(sla?.name) === 'normal';
+    const isSedex = (sla: any) =>
+      normalize(sla?.id).includes('sedex') || normalize(sla?.name).includes('sedex');
+
+    const normal = deliverySlas.find(isNormal);
+    if (normal) {
+      return normal;
+    }
+    const sedex = deliverySlas.find(isSedex);
+    if (sedex) {
+      return sedex;
+    }
+
+    const sorted = [...deliverySlas].sort((a, b) => {
+      const priceA = Number(a?.price);
+      const priceB = Number(b?.price);
+      const priceAValue = Number.isFinite(priceA)
+        ? priceA
+        : Number.POSITIVE_INFINITY;
+      const priceBValue = Number.isFinite(priceB)
+        ? priceB
+        : Number.POSITIVE_INFINITY;
+      if (priceAValue !== priceBValue) {
+        return priceAValue - priceBValue;
+      }
+      const etaA = this.parseShippingEstimateToDays(a?.shippingEstimate);
+      const etaB = this.parseShippingEstimateToDays(b?.shippingEstimate);
+      return etaA - etaB;
+    });
+
+    return sorted[0] ?? null;
+  }
+
+  private buildDeliverySlaSummary(simulationData: any): Array<{
+    itemIndex: number;
+    itemId: string;
+    deliverySlas: Array<{ id: string; price: number; shippingEstimate?: string }>;
+  }> {
+    const logisticsEntries = Array.isArray(simulationData?.logisticsInfo)
+      ? simulationData.logisticsInfo
+      : [];
+    const simulationItems = Array.isArray(simulationData?.items)
+      ? simulationData.items
+      : [];
+    const itemByIndex = new Map<number, any>();
+    simulationItems.forEach((item: any, index: number) => {
+      const itemIndex = Number(item?.requestIndex ?? item?.itemIndex ?? item?.index ?? index);
+      itemByIndex.set(itemIndex, item);
+    });
+
+    return logisticsEntries.map((entry: any, index: number) => {
+      const itemIndex = Number(entry?.itemIndex ?? index);
+      const item = itemByIndex.get(itemIndex);
+      const itemId = String(item?.id ?? entry?.itemId ?? entry?.skuId ?? '');
+      const slas = Array.isArray(entry?.slas) ? entry.slas : [];
+      const deliverySlas = slas
+        .filter((sla: any) => (sla?.deliveryChannel ?? 'delivery') === 'delivery')
+        .map((sla: any) => ({
+          id: String(sla?.id ?? ''),
+          price: Number(sla?.price ?? 0),
+          shippingEstimate: sla?.shippingEstimate,
+        }));
+      return { itemIndex, itemId, deliverySlas };
+    });
+  }
+
+  private async logDeliverySlasAfterSlaError(
+    shopId: string,
+    payload: any,
+    orderId?: string,
+  ): Promise<void> {
+    try {
+      const orderPayload = Array.isArray(payload) ? payload[0] : payload;
+      const items = Array.isArray(orderPayload?.items) ? orderPayload.items : [];
+      const address = orderPayload?.shippingData?.address ?? {};
+      const postalCode = address?.postalCode;
+      if (!items.length || !postalCode) {
+        return;
+      }
+
+      const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+      const country = address?.country ?? 'BRA';
+      const simulation = await this.vtexClient.simulateOrder(
+        shopId,
+        items,
+        postalCode,
+        country,
+      );
+      const deliverySlas = this.buildDeliverySlaSummary(simulation.data);
+      this.logger.warn(
+        {
+          orderId,
+          shopId,
+          sc: vtexConfig.salesChannel,
+          affiliateId: vtexConfig.affiliateId ?? null,
+          postalCode,
+          deliverySlas,
+        },
+        'Delivery SLAs after SLA rejection',
+      );
+    } catch (err) {
+      this.logger.warn(
+        { err, orderId, shopId },
+        'Failed to re-simulate delivery SLAs after SLA error',
+      );
+    }
   }
 
   private logOrderSnapshot(order: any, orderId: string) {

@@ -9,11 +9,7 @@ export declare class VtexOrdersClient {
     createOrder(shopId: string, payload: unknown): Promise<import("axios").AxiosResponse<any, unknown, {}>>;
     getOrder(shopId: string, orderId: string): Promise<import("axios").AxiosResponse<any, any, {}>>;
     simulateOrder(shopId: string, items: any[], postalCode: string, country: string): Promise<import("axios").AxiosResponse<any, {
-        items: {
-            id: any;
-            quantity: any;
-            seller: any;
-        }[];
+        items: Record<string, unknown>[];
         postalCode: string;
         country: string;
     }, {}>>;

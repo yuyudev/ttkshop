@@ -83,5 +83,7 @@ export declare class TiktokProductClient {
     private formatNumber;
     private cleanPayload;
     private extractSizeLabel;
+    private extractSizeToken;
+    private isSizeToken;
 }
 export {};
