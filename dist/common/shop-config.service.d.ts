@@ -16,6 +16,8 @@ export interface VtexShopConfig {
     paymentSystemName?: string;
     paymentGroup?: string;
     paymentMerchant?: string;
+    preferredSlaId?: string;
+    sellerId?: string;
 }
 export interface TiktokCatalogConfig {
     shopCipher: string;

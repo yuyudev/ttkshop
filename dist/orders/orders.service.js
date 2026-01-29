@@ -311,6 +311,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
         }, 'TikTok order line items snapshot');
         const mappedItems = [];
         const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+        const configuredSellerId = vtexConfig.sellerId ?? '1';
         const toCents = (value) => {
             if (value === null || value === undefined) {
                 return 0;
@@ -392,7 +393,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     mappedItems.push({
                         id: sellerSku,
                         quantity: normalizeQuantity(item.quantity),
-                        seller: '1',
+                        seller: configuredSellerId,
                         price: toCents(item.sale_price ?? item.original_price ?? item.price ?? 0),
                     });
                     continue;
@@ -403,7 +404,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             mappedItems.push({
                 id: mapping.vtexSkuId,
                 quantity: normalizeQuantity(item.quantity),
-                seller: '1',
+                seller: configuredSellerId,
                 price: toCents(item.sale_price ?? item.original_price ?? item.price ?? 0),
             });
         }
@@ -527,6 +528,7 @@ let OrdersService = OrdersService_1 = class OrdersService {
             shippingTotalCents = 0;
             let missingDelivery = false;
             const missingDetails = [];
+            const preferredSlaId = this.normalizeSlaId(vtexConfig.preferredSlaId);
             logisticsEntries.forEach((entry, index) => {
                 const itemIndex = Number(entry?.itemIndex ?? index);
                 const item = itemByIndex.get(itemIndex);
@@ -542,7 +544,27 @@ let OrdersService = OrdersService_1 = class OrdersService {
                     });
                     return;
                 }
-                const sla = this.pickPreferredDeliverySla(deliverySlas);
+                let sla = null;
+                if (preferredSlaId) {
+                    sla =
+                        deliverySlas.find((candidate) => this.normalizeSlaId(candidate?.id) === preferredSlaId ||
+                            this.normalizeSlaId(candidate?.name) === preferredSlaId) ?? null;
+                    if (!sla) {
+                        this.logger.warn({
+                            orderId: order?.id ?? order?.order_id,
+                            preferredSlaId,
+                            availableSlas: deliverySlas.map((candidate) => ({
+                                id: candidate?.id,
+                                name: candidate?.name,
+                                price: candidate?.price,
+                                shippingEstimate: candidate?.shippingEstimate,
+                            })),
+                        }, 'Preferred SLA not available; falling back to default selection');
+                    }
+                }
+                if (!sla) {
+                    sla = this.pickPreferredDeliverySla(deliverySlas);
+                }
                 if (!sla) {
                     missingDelivery = true;
                     missingDetails.push({
@@ -790,6 +812,13 @@ let OrdersService = OrdersService_1 = class OrdersService {
             return value / (24 * 60);
         }
         return value;
+    }
+    normalizeSlaId(value) {
+        if (typeof value !== 'string') {
+            return null;
+        }
+        const trimmed = value.trim().toLowerCase();
+        return trimmed ? trimmed : null;
     }
     pickPreferredDeliverySla(deliverySlas) {
         if (!Array.isArray(deliverySlas) || !deliverySlas.length) {

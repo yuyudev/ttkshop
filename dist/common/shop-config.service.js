@@ -38,6 +38,8 @@ let ShopConfigService = ShopConfigService_1 = class ShopConfigService {
             paymentSystemName: this.normalizeOptional(record.vtexPaymentSystemName),
             paymentGroup: this.normalizeOptional(record.vtexPaymentGroup),
             paymentMerchant: this.normalizeOptional(record.vtexPaymentMerchant),
+            preferredSlaId: this.normalizeOptional(record.vtexPreferredSlaId),
+            sellerId: this.normalizeOptional(record.vtexSellerId),
         };
     }
     async getTiktokCatalogConfig(shopId) {

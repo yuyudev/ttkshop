@@ -41,6 +41,7 @@ export declare class OrdersService {
     private isVtexPaymentMismatch;
     private isVtexSlaUnavailable;
     private parseShippingEstimateToDays;
+    private normalizeSlaId;
     private pickPreferredDeliverySla;
     private buildDeliverySlaSummary;
     private logDeliverySlasAfterSlaError;
