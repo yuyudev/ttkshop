@@ -25,6 +25,7 @@ import { InventoryService } from './inventory/inventory.service';
 import { InventoryController } from './inventory/inventory.controller';
 import { OrdersController } from './orders/orders.controller';
 import { OrdersService } from './orders/orders.service';
+import { OrdersInvoiceScheduler } from './orders/orders.scheduler';
 import { TiktokOrderClient } from './orders/tiktok-order.client';
 import { VtexOrdersClient } from './orders/vtex-orders.client';
 import { LogisticsService } from './logistics/logistics.service';
@@ -102,6 +103,7 @@ import { ShopConfigService } from './common/shop-config.service';
     VtexCatalogClient,
     InventoryService,
     OrdersService,
+    OrdersInvoiceScheduler,
     TiktokOrderClient,
     VtexOrdersClient,
     LogisticsService,

@@ -33,6 +33,7 @@ const inventory_service_1 = require("./inventory/inventory.service");
 const inventory_controller_1 = require("./inventory/inventory.controller");
 const orders_controller_1 = require("./orders/orders.controller");
 const orders_service_1 = require("./orders/orders.service");
+const orders_scheduler_1 = require("./orders/orders.scheduler");
 const tiktok_order_client_1 = require("./orders/tiktok-order.client");
 const vtex_orders_client_1 = require("./orders/vtex-orders.client");
 const logistics_service_1 = require("./logistics/logistics.service");
@@ -115,6 +116,7 @@ exports.AppModule = AppModule = __decorate([
             vtex_catalog_client_1.VtexCatalogClient,
             inventory_service_1.InventoryService,
             orders_service_1.OrdersService,
+            orders_scheduler_1.OrdersInvoiceScheduler,
             tiktok_order_client_1.TiktokOrderClient,
             vtex_orders_client_1.VtexOrdersClient,
             logistics_service_1.LogisticsService,

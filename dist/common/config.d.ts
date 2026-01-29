@@ -31,6 +31,9 @@ export declare const configSchema: z.ZodObject<{
     VTEX_PAGE_SIZE: z.ZodEffects<z.ZodEffects<z.ZodOptional<z.ZodString>, number | undefined, string | undefined>, number | undefined, string | undefined>;
     VTEX_PAGE_LIMIT: z.ZodEffects<z.ZodEffects<z.ZodOptional<z.ZodString>, number | undefined, string | undefined>, number | undefined, string | undefined>;
     VTEX_FILE_PAGE_SIZE: z.ZodEffects<z.ZodEffects<z.ZodOptional<z.ZodString>, number | undefined, string | undefined>, number | undefined, string | undefined>;
+    VTEX_INVOICE_POLL_ENABLED: z.ZodEffects<z.ZodOptional<z.ZodString>, boolean, string | undefined>;
+    VTEX_INVOICE_POLL_BATCH: z.ZodEffects<z.ZodEffects<z.ZodOptional<z.ZodString>, number, string | undefined>, number, string | undefined>;
+    VTEX_INVOICE_POLL_MAX_AGE_DAYS: z.ZodEffects<z.ZodEffects<z.ZodOptional<z.ZodString>, number, string | undefined>, number, string | undefined>;
 }, "strip", z.ZodTypeAny, {
     NODE_ENV: "development" | "test" | "production";
     PORT: number;
@@ -54,6 +57,9 @@ export declare const configSchema: z.ZodObject<{
     REQUEST_TIMEOUT_MS: number;
     HTTP_MAX_RETRIES: number;
     TTS_LABEL_TRIGGER: "immediate" | "invoice";
+    VTEX_INVOICE_POLL_ENABLED: boolean;
+    VTEX_INVOICE_POLL_BATCH: number;
+    VTEX_INVOICE_POLL_MAX_AGE_DAYS: number;
     TIKTOK_PACKAGE_WEIGHT?: number | undefined;
     TIKTOK_PACKAGE_LENGTH?: number | undefined;
     TIKTOK_PACKAGE_WIDTH?: number | undefined;
@@ -95,6 +101,9 @@ export declare const configSchema: z.ZodObject<{
     VTEX_PAGE_SIZE?: string | undefined;
     VTEX_PAGE_LIMIT?: string | undefined;
     VTEX_FILE_PAGE_SIZE?: string | undefined;
+    VTEX_INVOICE_POLL_ENABLED?: string | undefined;
+    VTEX_INVOICE_POLL_BATCH?: string | undefined;
+    VTEX_INVOICE_POLL_MAX_AGE_DAYS?: string | undefined;
 }>;
 export type AppConfig = z.infer<typeof configSchema>;
 export declare const validateConfig: (config: Record<string, unknown>) => AppConfig;

@@ -22,7 +22,14 @@ export declare class TiktokOrderClient {
             file_type: string;
             file: string;
         }>;
-    }): Promise<import("axios").AxiosResponse<any, any, {}>>;
+    }): Promise<import("axios").AxiosResponse<any, {
+        invoices: {
+            order_ids: string[];
+            package_id: string;
+            file_type: string;
+            file: string;
+        }[];
+    }, {}>>;
     private request;
     private isExpiredError;
     private withTokenRetry;

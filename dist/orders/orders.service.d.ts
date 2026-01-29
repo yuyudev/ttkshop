@@ -30,6 +30,10 @@ export declare class OrdersService {
         labelUrl?: undefined;
     }>;
     scheduleVtexMarketplaceNotification(payload: any, shopId: string): void;
+    pollPendingInvoices(options: {
+        batchSize: number;
+        maxAgeDays: number;
+    }): Promise<void>;
     handleVtexMarketplaceNotification(payload: any, shopId: string): Promise<void>;
     private buildVtexOrderPayload;
     private resolveSimulationPricing;
@@ -54,6 +58,7 @@ export declare class OrdersService {
     private buildMarketplaceIdempotencyKey;
     private resolveOrderMapping;
     private extractInvoiceData;
+    private processInvoiceForMapping;
     private uploadInvoiceToTikTok;
     private resolveInvoiceFileBase64;
     private resolveInvoiceFileCandidate;

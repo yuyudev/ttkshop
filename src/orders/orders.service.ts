@@ -280,6 +280,42 @@ export class OrdersService {
     });
   }
 
+  async pollPendingInvoices(options: { batchSize: number; maxAgeDays: number }) {
+    const maxAgeMs = options.maxAgeDays * 24 * 60 * 60 * 1000;
+    const cutoff = new Date(Date.now() - maxAgeMs);
+
+    const pending = await this.prisma.orderMap.findMany({
+      where: {
+        status: { in: ['awaiting_invoice', 'imported'] },
+        vtexOrderId: { not: null },
+        createdAt: { gte: cutoff },
+      },
+      take: options.batchSize,
+      orderBy: { updatedAt: 'asc' },
+    });
+
+    if (pending.length === 0) {
+      return;
+    }
+
+    this.logger.info(
+      { count: pending.length, maxAgeDays: options.maxAgeDays },
+      'Polling VTEX orders for invoice availability',
+    );
+
+    for (const mapping of pending) {
+      if (!mapping.vtexOrderId) continue;
+      try {
+        await this.processInvoiceForMapping(mapping, mapping.vtexOrderId, 'poller');
+      } catch (error) {
+        this.logger.error(
+          { err: error, shopId: mapping.shopId, orderId: mapping.ttsOrderId, vtexOrderId: mapping.vtexOrderId },
+          'Failed to poll invoice for VTEX order',
+        );
+      }
+    }
+  }
+
   async handleVtexMarketplaceNotification(payload: any, shopId: string): Promise<void> {
     if (!payload || typeof payload !== 'object') {
       this.logger.warn({ payload, shopId }, 'Received empty VTEX marketplace notification');
@@ -313,70 +349,9 @@ export class OrdersService {
         return;
       }
 
-      if (mapping.labelUrl) {
-        this.logger.info(
-          { shopId, orderId: mapping.ttsOrderId, vtexOrderId },
-          'Label already generated; skipping marketplace notification',
-        );
-        return;
-      }
-
       const orderResponse = await this.vtexClient.getOrder(shopId, vtexOrderId);
       const orderData = orderResponse.data ?? {};
-      const invoice = this.extractInvoiceData(orderData);
-
-      if (!invoice) {
-        this.logger.info(
-          { shopId, orderId: mapping.ttsOrderId, vtexOrderId, status: event.status },
-          'Marketplace notification received but no invoice found yet',
-        );
-        return;
-      }
-
-      await this.prisma.orderMap.update({
-        where: { ttsOrderId: mapping.ttsOrderId },
-        data: {
-          status: 'invoiced',
-          lastError: null,
-          shopId,
-        },
-      });
-
-      const orderValue = this.resolveOrderValue(orderData);
-
-      const invoiceId = invoice?.key ?? invoice?.number ?? 'unknown';
-      const uploadKey = `tiktok-invoice-upload:${mapping.ttsOrderId}:${invoiceId}`;
-      const uploadResult = await this.idempotency.register(
-        uploadKey,
-        { ttsOrderId: mapping.ttsOrderId, invoiceId },
-        async () => {
-          await this.uploadInvoiceToTikTok(shopId, mapping.ttsOrderId, orderData, invoice);
-        },
-      );
-
-      if (uploadResult === 'skipped') {
-        this.logger.info(
-          { shopId, orderId: mapping.ttsOrderId, vtexOrderId, invoiceId },
-          'Invoice already uploaded to TikTok; proceeding with label generation',
-        );
-      }
-
-      this.logger.info(
-        {
-          shopId,
-          orderId: mapping.ttsOrderId,
-          vtexOrderId,
-          invoiceNumber: invoice?.number,
-        },
-        'Generating label after invoice notification',
-      );
-
-      await this.logisticsService.generateLabel(
-        shopId,
-        mapping.ttsOrderId,
-        orderValue,
-        invoice ?? undefined,
-      );
+      await this.processInvoiceForMapping(mapping, vtexOrderId, 'marketplace', orderData, event.status);
     });
   }
 
@@ -1353,14 +1328,100 @@ export class OrdersService {
     return null;
   }
 
+  private async processInvoiceForMapping(
+    mapping: { ttsOrderId: string; shopId: string; vtexOrderId?: string | null; labelUrl?: string | null },
+    vtexOrderId: string,
+    source: 'marketplace' | 'poller',
+    orderData?: any,
+    statusHint?: string,
+  ): Promise<void> {
+    const shopId = mapping.shopId;
+    const data =
+      orderData ??
+      (await this.vtexClient.getOrder(shopId, vtexOrderId)).data ??
+      {};
+    const invoice = this.extractInvoiceData(data);
+
+    if (!invoice) {
+      this.logger.info(
+        { shopId, orderId: mapping.ttsOrderId, vtexOrderId, source, status: statusHint },
+        'Invoice not available yet for VTEX order',
+      );
+      return;
+    }
+
+    const fileBase64 = await this.resolveInvoiceFileBase64(data, shopId);
+    if (!fileBase64) {
+      this.logger.info(
+        { shopId, orderId: mapping.ttsOrderId, vtexOrderId, source },
+        'Invoice XML not available yet for TikTok upload',
+      );
+      return;
+    }
+
+    const orderValue = this.resolveOrderValue(data);
+    const invoiceId = invoice?.key ?? invoice?.number ?? 'unknown';
+    const uploadKey = `tiktok-invoice-upload:${mapping.ttsOrderId}:${invoiceId}`;
+    const uploadResult = await this.idempotency.register(
+      uploadKey,
+      { ttsOrderId: mapping.ttsOrderId, invoiceId },
+      async () => {
+        await this.uploadInvoiceToTikTok(shopId, mapping.ttsOrderId, data, invoice, fileBase64);
+      },
+    );
+
+    if (uploadResult === 'skipped') {
+      this.logger.info(
+        { shopId, orderId: mapping.ttsOrderId, vtexOrderId, invoiceId },
+        'Invoice already uploaded to TikTok; skipping duplicate upload',
+      );
+    }
+
+    await this.prisma.orderMap.update({
+      where: { ttsOrderId: mapping.ttsOrderId },
+      data: {
+        status: 'invoiced',
+        lastError: null,
+        shopId,
+      },
+    });
+
+    if (mapping.labelUrl) {
+      this.logger.info(
+        { shopId, orderId: mapping.ttsOrderId, vtexOrderId },
+        'Label already generated; skipping label generation',
+      );
+      return;
+    }
+
+    this.logger.info(
+      {
+        shopId,
+        orderId: mapping.ttsOrderId,
+        vtexOrderId,
+        invoiceNumber: invoice?.number,
+        source,
+      },
+      'Generating label after invoice availability',
+    );
+
+    await this.logisticsService.generateLabel(
+      shopId,
+      mapping.ttsOrderId,
+      orderValue,
+      invoice ?? undefined,
+    );
+  }
+
   private async uploadInvoiceToTikTok(
     shopId: string,
     ttsOrderId: string,
     orderData: any,
     invoice: { number?: string; key?: string; issuanceDate?: string; value?: number },
+    fileBase64?: string,
   ): Promise<void> {
-    const fileBase64 = await this.resolveInvoiceFileBase64(orderData, shopId);
-    if (!fileBase64) {
+    const invoiceFile = fileBase64 ?? (await this.resolveInvoiceFileBase64(orderData, shopId));
+    if (!invoiceFile) {
       throw new Error('Invoice XML not found or not retrievable for TikTok upload');
     }
 
@@ -1380,7 +1441,7 @@ export class OrdersService {
           package_id: packageId,
           order_ids: ttsOrderId,
           file_type: 'XML',
-          file: fileBase64,
+          file: invoiceFile,
         },
       ],
     });

@@ -127,6 +127,29 @@ export const configSchema = z.object({
     .refine((value) => value === undefined || (Number.isFinite(value) && value > 0 && value <= 100), {
       message: 'VTEX_FILE_PAGE_SIZE must be between 1 and 100',
     }),
+  VTEX_INVOICE_POLL_ENABLED: z
+    .string()
+    .optional()
+    .transform((value) => {
+      if (value === undefined) return true;
+      const normalized = value.trim().toLowerCase();
+      if (normalized === '') return true;
+      return !['0', 'false', 'no', 'off'].includes(normalized);
+    }),
+  VTEX_INVOICE_POLL_BATCH: z
+    .string()
+    .optional()
+    .transform((value) => (value ? Number(value) : 50))
+    .refine((value) => Number.isFinite(value) && value > 0 && value <= 500, {
+      message: 'VTEX_INVOICE_POLL_BATCH must be between 1 and 500',
+    }),
+  VTEX_INVOICE_POLL_MAX_AGE_DAYS: z
+    .string()
+    .optional()
+    .transform((value) => (value ? Number(value) : 30))
+    .refine((value) => Number.isFinite(value) && value > 0 && value <= 365, {
+      message: 'VTEX_INVOICE_POLL_MAX_AGE_DAYS must be between 1 and 365',
+    }),
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

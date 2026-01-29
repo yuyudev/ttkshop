@@ -40,6 +40,12 @@ let TiktokOrderClient = class TiktokOrderClient {
         return this.withTokenRetry(shopId, async (token) => {
             const baseUrl = this.openBase.replace(/\/$/, '');
             const cleanPath = '/fulfillment/202502/invoice/upload';
+            const normalizedBody = {
+                invoices: (payload.invoices ?? []).map((invoice) => ({
+                    ...invoice,
+                    order_ids: Array.isArray(invoice.order_ids) ? invoice.order_ids : [invoice.order_ids],
+                })),
+            };
             const shopConfig = await this.shopConfigService.getTiktokOrderConfig(shopId);
             const { url, headers, body } = (0, signer_1.buildSignedRequest)(baseUrl, cleanPath, this.appKey, this.appSecret, {
                 qs: {
@@ -50,15 +56,25 @@ let TiktokOrderClient = class TiktokOrderClient {
                     Accept: 'application/json',
                     'x-tts-access-token': token,
                 },
-                body: payload,
+                body: normalizedBody,
             });
-            const response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, body, { headers }));
-            const code = response.data?.code;
-            if (code !== undefined && code !== 0) {
-                const message = response.data?.message ?? 'Unknown';
-                throw new Error(`TikTok invoice upload failed: code=${code} message=${message}`);
+            try {
+                const response = await (0, rxjs_1.firstValueFrom)(this.http.post(url, normalizedBody, { headers }));
+                const code = response.data?.code;
+                if (code !== undefined && code !== 0) {
+                    const message = response.data?.message ?? 'Unknown';
+                    throw new Error(`TikTok invoice upload failed: code=${code} message=${message} data=${JSON.stringify(response.data)}`);
+                }
+                return response;
             }
-            return response;
+            catch (err) {
+                const status = err?.response?.status;
+                const data = err?.response?.data;
+                if (status && data) {
+                    throw new Error(`TikTok invoice upload HTTP ${status}: ${JSON.stringify(data)}`);
+                }
+                throw err;
+            }
         });
     }
     async request(shopId, method, path, payload, params) {
