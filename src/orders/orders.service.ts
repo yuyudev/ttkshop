@@ -422,6 +422,7 @@ export class OrdersService {
       price: number;
     }> = [];
     const vtexConfig = await this.shopConfigService.getVtexConfig(shopId);
+    const configuredSellerId = vtexConfig.sellerId ?? '1';
 
     const toCents = (value: unknown): number => {
       if (value === null || value === undefined) {
@@ -527,7 +528,7 @@ export class OrdersService {
           mappedItems.push({
             id: sellerSku,
             quantity: normalizeQuantity(item.quantity),
-            seller: '1',
+            seller: configuredSellerId,
             price: toCents(item.sale_price ?? item.original_price ?? item.price ?? 0),
           });
           continue;
@@ -543,7 +544,7 @@ export class OrdersService {
       mappedItems.push({
         id: mapping.vtexSkuId,
         quantity: normalizeQuantity(item.quantity),
-        seller: '1',
+        seller: configuredSellerId,
         price: toCents(item.sale_price ?? item.original_price ?? item.price ?? 0),
       });
     }
@@ -727,6 +728,8 @@ export class OrdersService {
       let missingDelivery = false;
       const missingDetails: Array<Record<string, unknown>> = [];
 
+      const preferredSlaId = this.normalizeSlaId(vtexConfig.preferredSlaId);
+
       logisticsEntries.forEach((entry: any, index: number) => {
         const itemIndex = Number(entry?.itemIndex ?? index);
         const item = itemByIndex.get(itemIndex);
@@ -746,7 +749,35 @@ export class OrdersService {
           return;
         }
 
-        const sla = this.pickPreferredDeliverySla(deliverySlas);
+        let sla: any | null = null;
+        if (preferredSlaId) {
+          sla =
+            deliverySlas.find(
+              (candidate: any) =>
+                this.normalizeSlaId(candidate?.id) === preferredSlaId ||
+                this.normalizeSlaId(candidate?.name) === preferredSlaId,
+            ) ?? null;
+
+          if (!sla) {
+            this.logger.warn(
+              {
+                orderId: order?.id ?? order?.order_id,
+                preferredSlaId,
+                availableSlas: deliverySlas.map((candidate: any) => ({
+                  id: candidate?.id,
+                  name: candidate?.name,
+                  price: candidate?.price,
+                  shippingEstimate: candidate?.shippingEstimate,
+                })),
+              },
+              'Preferred SLA not available; falling back to default selection',
+            );
+          }
+        }
+
+        if (!sla) {
+          sla = this.pickPreferredDeliverySla(deliverySlas);
+        }
         if (!sla) {
           missingDelivery = true;
           missingDetails.push({
@@ -1040,6 +1071,14 @@ export class OrdersService {
       return value / (24 * 60);
     }
     return value;
+  }
+
+  private normalizeSlaId(value: unknown): string | null {
+    if (typeof value !== 'string') {
+      return null;
+    }
+    const trimmed = value.trim().toLowerCase();
+    return trimmed ? trimmed : null;
   }
 
   private pickPreferredDeliverySla(deliverySlas: any[]): any | null {
